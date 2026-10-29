@@ -1,35 +1,37 @@
-<h3 align="center"><b>XCP-ng</b></h3>
-<p align="center"><b>Turnkey Open Source Virtualization Platform</b></p>
+<h3 align="center"><b>Fragata Host</b></h3>
+<p align="center"><b>Plataforma de virtualização open source, baseada no hipervisor Xen</b></p>
 
-![](https://repository-images.githubusercontent.com/115137464/d31efd36-b148-4d9b-a2a3-fea9663fedf7)
+Fragata Host é um hard fork do XCP-ng, iniciado em 29 de outubro de 2026 a partir do commit `5282a6b` do repositório `xcp-ng/xcp`. A partir desse ponto o projeto segue roadmap, versionamento e identidade próprios.
 
-XCP-ng: the user-friendly, high-performance virtualization solution, developed collaboratively for unrestricted features and open-source accessibility.
+Este repositório é o ponto de entrada do projeto: issues, documentação de processo, scripts de build e listas de pacotes das ISOs. O código do sistema instalado (release, instalador, geração de ISO, console de texto) vive em repositórios próprios, listados abaixo.
 
-## ⚡️ Quick start
+## Componentes
 
-Download [the ISO here](https://mirrors.xcp-ng.org/isos/8.2/xcp-ng-8.2.1.iso?https=1), and [install it](https://xcp-ng.org/#easy-to-install) on your own hardware.
+| Produto | Papel | Origem |
+|---|---|---|
+| **Fragata Host** | hipervisor e host de virtualização | XCP-ng |
+| **Fragata Fleet** | orquestração, backup e API para um ou mais pools | Xen Orchestra |
+| **Fragata Deck** | interface leve embutida no host | XO Lite |
 
-## 📚 Documentation
+## Repositórios
 
-The official documentation is available at https://docs.xcp-ng.org
+- `fragata-host` (este): entrada, scripts, listas de ISO.
+- `fragata-fleet`: orquestrador, backup, API REST, interfaces web.
+- A forkar quando o build do Host começar: `xcp-ng-release`, `host-installer`, `create-install-image`, `xsconsole`, `xcp-ng-build-env`.
 
-## 🚀 Features
+## Estado
 
-- **Powerful virtualization platform**: run, snapshot, live migrate & grow any kind of workload/Operating system on top of XCP-ng, even containers!
-- **Turnkey:** no complicated setup, XCP-ng is a true appliance with everything pre-configured and ready to run your VMs!
-- **Security:** based on the Xen hypervisor technology, XCP-ng is one of the most secure virtualization platform on the market, both technologically and with a really [serious security workflow](https://docs.xcp-ng.org/project/security).
-- **Manageable at scale:** there's many integrated ways to manage your XCP-ng host, both locally and remotely with a CLI, GUI and API. [Xen Orchestra](https://vates.tech/xen-orchestra/) is the de facto administration & backup platform for it.
-- **Fully Open Source:** no paywalls or complicated licenses, all the features are free
-- **Pro supported:** want to run in production? XCP-ng is part of the [Vates VMS](https://vates.tech/) stack that got you covered from the virtualization platform to the administration & backup tools.
+Pré-1.0. O rebranding começou pelo nome e pela marca; o build de ISO própria ainda não existe. Até lá, o Fragata Fleet gerencia hosts XCP-ng e XenServer normalmente.
 
-## 📸 Screenshots
+## Branches
 
-![](https://vates.tech/assets/img/misc/XOLite_Pool_dashboard_mockup_dashes_light_2.png.avif)
+- `main`: linha de desenvolvimento do Fragata.
+- `upstream`: cópia congelada do ponto de origem (`upstream-base`), mantida só para referência e cherry-pick seletivo de correções de segurança. Nunca é mergeada.
 
-![](https://xen-orchestra.com/blog/content/images/size/w1600/2023/05/Desktop---Pool-dashboard---Default.png)
+## Licença
 
-## 🧑‍🚀 Community
+Mesmas licenças do XCP-ng (GPL-2.0 e licenças por componente). Os avisos de copyright originais são mantidos; consulte `LICENSE`.
 
-XCP-ng has a living community that you can join on our [forum](https://xcp-ng.org/forum/). 
+## Origem
 
-The project is open to [contributions](https://docs.xcp-ng.org/project/contributing/), [bug reports](https://github.com/xcp-ng/xcp/wiki/How-to-report-bugs) and you can also [host a mirror](https://github.com/xcp-ng/xcp/wiki/Mirrors) for XCP-ng.
+O XCP-ng é um projeto da Vates e da comunidade XCP-ng. "XCP-ng", "Xen Orchestra" e "XOA" são marcas de seus respectivos donos e não são usadas por este projeto. "Xen" é marca do Xen Project.
