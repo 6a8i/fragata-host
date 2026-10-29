@@ -10,18 +10,18 @@ Este repositório é o ponto de entrada do projeto: issues, documentação de pr
 | Produto | Papel | Origem |
 |---|---|---|
 | **Fragata Host** | hipervisor e host de virtualização | XCP-ng |
-| **Fragata Fleet** | orquestração, backup e API para um ou mais pools | Xen Orchestra |
+| **Fragata** | orquestração, backup e API para um ou mais pools | Xen Orchestra |
 | **Fragata Deck** | interface leve embutida no host | XO Lite |
 
 ## Repositórios
 
 - `fragata-host` (este): entrada, scripts, listas de ISO.
-- `fragata-fleet`: orquestrador, backup, API REST, interfaces web.
+- `fragata-orchestrator`: orquestrador, backup, API REST, interfaces web.
 - A forkar quando o build do Host começar: `xcp-ng-release`, `host-installer`, `create-install-image`, `xsconsole`, `xcp-ng-build-env`.
 
 ## Estado
 
-Pré-1.0. O rebranding começou pelo nome e pela marca; o build de ISO própria ainda não existe. Até lá, o Fragata Fleet gerencia hosts XCP-ng e XenServer normalmente.
+Pré-1.0. O rebranding começou pelo nome e pela marca; o build de ISO própria ainda não existe. Até lá, o Fragata gerencia hosts XCP-ng e XenServer normalmente.
 
 ## Branches
 
