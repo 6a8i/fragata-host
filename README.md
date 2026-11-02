@@ -21,7 +21,7 @@ Este repositório é o ponto de entrada do projeto: issues, documentação de pr
 
 ## Estado
 
-Pré-1.0. O rebranding começou pelo nome e pela marca; o build de ISO própria ainda não existe. Até lá, o Fragata gerencia hosts XCP-ng e XenServer normalmente.
+Pré-1.0. A ISO do Fragata Host é gerada por `scripts/fragata-iso/build-iso.sh` a partir da ISO do XCP-ng da mesma versão: o host instalado se identifica como `Fragata Host`, com os pacotes, o canal de atualização e as chaves do upstream. O console de texto, o banner de login e o `os-release` do host instalado ainda vêm dos pacotes do upstream, até o build dos forks. O Fragata gerencia hosts Fragata Host, XCP-ng e XenServer.
 
 ## Branches
 
