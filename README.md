@@ -21,7 +21,7 @@ Este repositório é o ponto de entrada do projeto: issues, documentação de pr
 
 ## Estado
 
-Pré-1.0. A ISO do Fragata Host é gerada por `scripts/fragata-iso/build-iso.sh` a partir da ISO do XCP-ng da mesma versão: o host instalado se identifica como `Fragata Host`, com os pacotes, o canal de atualização e as chaves do upstream. O console de texto, o banner de login e o `os-release` do host instalado ainda vêm dos pacotes do upstream, até o build dos forks. O Fragata gerencia hosts Fragata Host, XCP-ng e XenServer.
+Pré-1.0. O Fragata Host tem canal de atualização próprio: os hosts só falam com o repositório do Fragata (`fragata.repo`), assinado pela chave do Fragata. O conteúdo é montado por `scripts/packages/` (pacotes próprios `fragata-release` e `xcp-ng-xapi-plugins` + os binários do XCP-ng 8.3, conferidos e re-assinados) e a ISO por `scripts/fragata-iso/build-iso.sh` a partir desses pacotes. A recompilação de todos os pacotes a partir do código-fonte é a fase 2. O Fragata gerencia hosts Fragata Host, XCP-ng e XenServer.
 
 ## Branches
 

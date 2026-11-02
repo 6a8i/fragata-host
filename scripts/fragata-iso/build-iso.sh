@@ -1,13 +1,20 @@
 #!/bin/sh
-# Builds the Fragata Host installation ISO from the XCP-ng 8.3 ISO: same packages, update channel and signing keys,
-# with the Fragata Host brand in the boot menus, the installer and the identity written on the installed host.
+# Builds the Fragata Host installation ISO from the XCP-ng 8.3 ISO, with the Fragata Host brand in the boot
+# menus, the installer and the identity written on the installed host.
 #
-# usage (as root, on Linux): build-iso.sh <upstream ISO> <output ISO>
-# needs: xorriso cpio bzip2
+# With a package directory and a key directory, the ISO installs the packages of the Fragata Host repository
+# (scripts/packages/build-repo.sh), signed by the Fragata Host key, instead of the upstream ones: the installed
+# host then only uses the Fragata Host update channel.
+#
+# usage (as root, on Linux): build-iso.sh <upstream ISO> <output ISO> [<signed packages dir> <key dir>]
+#   key dir: RPM-GPG-KEY-fragata, fragata-signing.secret.asc, passphrase.txt
+# needs: xorriso cpio bzip2 python3, and createrepo_c gpg with packages
 set -eu
 
 UPSTREAM=$1
 OUTPUT=$2
+PACKAGES=${3:-}
+KEYS=${4:-}
 HERE=$(cd "$(dirname "$0")" && pwd)
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -39,13 +46,34 @@ mkdir "$WORK/installimg"
 python3 "$HERE/brand-installer.py" "$WORK/installimg/opt/xensource/installer/version.py"
 (cd "$WORK/installimg" && find . | cpio -o -H newc --quiet | bzip2 -9 >"$WORK/install.img")
 
-rm -f "$OUTPUT"
-xorriso -indev "$UPSTREAM" -outdev "$OUTPUT" -boot_image any replay \
-  -volid "FRAGATA HOST $VERSION" \
+set -- \
   -map "$WORK/treeinfo" /.treeinfo \
   -map "$WORK/pg_main" /boot/isolinux/pg_main \
   -map "$WORK/pg_help" /boot/isolinux/pg_help \
-  -map "$WORK/install.img" /install.img 2>&1 | tail -1
+  -map "$WORK/install.img" /install.img
+
+if [ -n "$PACKAGES" ]; then
+  # packages of the Fragata Host repository; the installer checks them with the key named in .treeinfo
+  mkdir -p "$WORK/repo/Packages"
+  cp "$PACKAGES"/*.rpm "$WORK/repo/Packages/"
+  # the yum of the installer (CentOS 7) reads gzip metadata, not zstd
+  createrepo_c -q --general-compress-type gz "$WORK/repo"
+  export GNUPGHOME="$WORK/gnupg"
+  mkdir -m 700 "$GNUPGHOME"
+  gpg --batch -q --import "$KEYS/fragata-signing.secret.asc"
+  gpg --batch -q --yes --pinentry-mode loopback --passphrase-file "$KEYS/passphrase.txt" \
+    --armor --detach-sign "$WORK/repo/repodata/repomd.xml"
+  sed -i '/^\[keys\]/,/^\[/ s/^key1 = .*/key1 = RPM-GPG-KEY-fragata/' "$WORK/treeinfo"
+  set -- "$@" \
+    -rm_r /Packages /repodata /RPM-GPG-KEY-xcpng -- \
+    -map "$WORK/repo/Packages" /Packages \
+    -map "$WORK/repo/repodata" /repodata \
+    -map "$KEYS/RPM-GPG-KEY-fragata" /RPM-GPG-KEY-fragata
+fi
+
+rm -f "$OUTPUT"
+xorriso -indev "$UPSTREAM" -outdev "$OUTPUT" -boot_image any replay \
+  -volid "FRAGATA HOST $VERSION" "$@" 2>&1 | tail -1
 
 sha256sum "$OUTPUT" >"$OUTPUT.sha256"
 cat "$OUTPUT.sha256"
