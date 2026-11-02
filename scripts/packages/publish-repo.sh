@@ -59,5 +59,6 @@ git -C "$WORK/site" -c user.name="Fragata Host" -c user.email="fragata-host@user
 git -C "$WORK/site" push -q origin gh-pages
 
 gh api "repos/$REPO/pages" >/dev/null 2>&1 ||
-  gh api -X POST "repos/$REPO/pages" -f "source[branch]=gh-pages" -f "source[path]=/" >/dev/null
+  gh api -X POST "repos/$REPO/pages" -f "source[branch]=gh-pages" -f "source[path]=/" >/dev/null 2>&1 ||
+  true # GitHub may enable Pages by itself on the first push of gh-pages
 echo "published: https://$(echo "$REPO" | cut -d/ -f1).github.io/$(echo "$REPO" | cut -d/ -f2)/$CHANNEL/x86_64/"

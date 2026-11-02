@@ -55,10 +55,10 @@ cp "$OWN"/*.x86_64.rpm "$OWN"/*.noarch.rpm "$OUT/packages/" 2>/dev/null || true
 # signatures
 sh "$(dirname "$0")/sign-rpms.sh" "$KEYS" "$OUT"/packages/*.rpm
 
-# GitHub renames the other characters of release asset names (e.g. + ~) to '.': the files take those names
-# already, the metadata point at them (yum does not use the file name)
+# GitHub renames the other characters of release asset names (e.g. + ~) to '.' and merges repeated dots: the
+# files take those names already, the metadata point at them (yum does not use the file name)
 for f in "$OUT"/packages/*.rpm; do
-  safe=$(basename "$f" | sed 's/[^A-Za-z0-9._-]/./g')
+  safe=$(basename "$f" | sed -e 's/[^A-Za-z0-9._-]/./g' -e 's/\.\.*/./g')
   [ "$safe" = "$(basename "$f")" ] || mv "$f" "$OUT/packages/$safe"
 done
 
