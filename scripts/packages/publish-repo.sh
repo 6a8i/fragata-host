@@ -27,6 +27,11 @@ for file in "$SRC"/packages/*.rpm; do
   fi
 done
 echo "$new packages uploaded"
+# the metadata point at the file names: every package must be an asset of that name
+existing=$(gh release view "$TAG" -R "$REPO" --json assets --jq '.assets[].name')
+for file in "$SRC"/packages/*.rpm; do
+  printf '%s\n' "$existing" | grep -qxF "$(basename "$file")" || { echo "missing asset: $(basename "$file")" >&2; exit 1; }
+done
 
 # metadata on GitHub Pages
 WORK=$(mktemp -d)

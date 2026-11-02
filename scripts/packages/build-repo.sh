@@ -55,6 +55,13 @@ cp "$OWN"/*.x86_64.rpm "$OWN"/*.noarch.rpm "$OUT/packages/" 2>/dev/null || true
 # signatures
 sh "$(dirname "$0")/sign-rpms.sh" "$KEYS" "$OUT"/packages/*.rpm
 
+# GitHub renames the other characters of release asset names (e.g. + ~) to '.': the files take those names
+# already, the metadata point at them (yum does not use the file name)
+for f in "$OUT"/packages/*.rpm; do
+  safe=$(basename "$f" | sed 's/[^A-Za-z0-9._-]/./g')
+  [ "$safe" = "$(basename "$f")" ] || mv "$f" "$OUT/packages/$safe"
+done
+
 # metadata: the packages are downloaded from PACKAGES_URL
 rm -rf "$OUT/repo/repodata"
 createrepo -q --baseurl "$PACKAGES_URL" --outputdir "$OUT/repo" "$OUT/packages"
