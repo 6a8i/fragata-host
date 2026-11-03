@@ -5,12 +5,14 @@
 # its log in <output>/logs/. A SRPM already built is skipped, one that failed is built again.
 #
 # The build environment only has the build dependencies of the XCP-ng packages: the buildroot adds CentOS 7.9 and
-# EPEL 7 (archives), below the XCP-ng repositories (yum priorities), for the CentOS packages of the channel. The
+# EPEL 7 (archives), below the XCP-ng repositories (yum priorities), when the XCP-ng repositories lack some. The
 # metadata of the repositories are downloaded once, in <output>/yumcache.
 #
 # usage: rebuild-srpms.sh <sources TSV> <output dir> [<binary package name>...]
 #   names: only the SRPMs of these binary packages (a pilot); default: every SRPM
 #   TIMEOUT: seconds a build may take (default 10800), so a hung test does not stop the rebuild
+#   BUILD_CPUS, BUILD_MEMORY: parallel jobs (default 8) and memory (default 8g) of a build: the memory of a VM
+#   (podman machine, WSL) grows with the builds, and so does the swap of its host
 # needs podman (or docker) and the image ghcr.io/xcp-ng/xcp-ng-build-env:8.3
 set -eu
 SOURCES=$1
@@ -21,6 +23,8 @@ OUT=$(cd "$2" && { pwd -W 2>/dev/null || pwd; })
 shift 2
 ENGINE=${ENGINE:-podman}
 TIMEOUT=${TIMEOUT:-10800}
+BUILD_CPUS=${BUILD_CPUS:-8}
+BUILD_MEMORY=${BUILD_MEMORY:-8g}
 mkdir -p "$OUT_DIR/srpms" "$OUT_DIR/rpms" "$OUT_DIR/logs" "$OUT_DIR/yumcache"
 touch "$OUT_DIR/results.tsv"
 
@@ -28,6 +32,8 @@ cat >"$OUT_DIR/buildroot.repo" <<'EOF'
 [fragata-buildroot-centos]
 name=CentOS 7.9 (build dependencies)
 baseurl=https://archive.kernel.org/centos-vault/7.9.2009/os/$basearch/
+# its libglvnd conflicts with the older mesa of XCP-ng
+exclude=libglvnd*
 gpgcheck=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
 priority=50
@@ -35,6 +41,8 @@ priority=50
 [fragata-buildroot-centos-updates]
 name=CentOS 7.9 updates (build dependencies)
 baseurl=https://archive.kernel.org/centos-vault/7.9.2009/updates/$basearch/
+# its libglvnd conflicts with the older mesa of XCP-ng
+exclude=libglvnd*
 gpgcheck=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
 priority=50
@@ -42,6 +50,8 @@ priority=50
 [fragata-buildroot-centos-extras]
 name=CentOS 7.9 extras (build dependencies)
 baseurl=https://archive.kernel.org/centos-vault/7.9.2009/extras/$basearch/
+# its libglvnd conflicts with the older mesa of XCP-ng
+exclude=libglvnd*
 gpgcheck=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
 priority=50
@@ -76,10 +86,15 @@ while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
   builddep_opts=
   case $srpm in *.el7*) builddep_opts=--setopt=xcp-ng-updates.exclude=autoconf ;; esac
   # Git Bash on Windows: no conversion of the container paths
-  if MSYS_NO_PATHCONV=1 "$ENGINE" run --rm -v "$OUT:/work" -v "$OUT/yumcache:/var/cache/yum" ghcr.io/xcp-ng/xcp-ng-build-env:8.3 sh -ec "
+  if MSYS_NO_PATHCONV=1 "$ENGINE" run --rm --memory "$BUILD_MEMORY" -e RPM_BUILD_NCPUS="$BUILD_CPUS" -v "$OUT:/work" -v "$OUT/yumcache:/var/cache/yum" ghcr.io/xcp-ng/xcp-ng-build-env:8.3 sh -ec "
       rpm -K /work/srpms/$srpm | grep -qi 'pgp' || { echo 'not signed'; exit 1; }
-      sudo cp /work/buildroot.repo /etc/yum.repos.d/
-      sudo yum-builddep -y $builddep_opts /work/srpms/$srpm
+      # the XCP-ng repositories first: the buildroot only for the build dependencies they lack (a failed
+      # transaction installs nothing)
+      if ! sudo yum-builddep -y $builddep_opts /work/srpms/$srpm; then
+        echo 'build dependencies missing from the XCP-ng repositories: adding the buildroot'
+        sudo cp /work/buildroot.repo /etc/yum.repos.d/
+        sudo yum-builddep -y $builddep_opts /work/srpms/$srpm
+      fi
       # build dependencies may set up their tools in profile.d (the OCaml toolchain of xs-opam-repo)
       for profile in /etc/profile.d/*.sh; do . \$profile; done
       if ! timeout $TIMEOUT rpmbuild --rebuild /work/srpms/$srpm; then
