@@ -72,7 +72,9 @@ while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
     done
     [ -n "$wanted" ] || continue
   fi
-  grep -qE "^$srpm	ok(-nocheck)?	" "$OUT_DIR/results.tsv" && continue
+  # exact names: a SRPM name may hold regular expression characters (kernel-alt-4.19.322+1)
+  awk -F'\t' -v srpm="$srpm" '$1 == srpm && $2 ~ /^ok(-nocheck)?$/ { found = 1 } END { exit !found }' \
+    "$OUT_DIR/results.tsv" && continue
   file="$OUT_DIR/srpms/$srpm"
   if [ ! -f "$file" ] || ! echo "$sha  $file" | sha256sum -c --status; then
     # --ssl-no-revoke: the curl of Windows fails when it cannot reach the revocation servers (no-op elsewhere)
@@ -115,7 +117,7 @@ while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
     status=failed
   fi
   # the last result of a SRPM replaces the previous ones
-  grep -vE "^$srpm	" "$OUT_DIR/results.tsv" >"$OUT_DIR/results.tsv.new" || true
+  awk -F'\t' -v srpm="$srpm" '$1 != srpm' "$OUT_DIR/results.tsv" >"$OUT_DIR/results.tsv.new"
   printf '%s\t%s\t%s\n' "$srpm" "$status" $(($(date +%s) - start)) >>"$OUT_DIR/results.tsv.new"
   mv "$OUT_DIR/results.tsv.new" "$OUT_DIR/results.tsv"
   echo "$srpm: $status ($(($(date +%s) - start)) s)"
