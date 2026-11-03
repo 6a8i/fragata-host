@@ -17,20 +17,26 @@ gh release view "$TAG" -R "$REPO" >/dev/null 2>&1 ||
   gh release create "$TAG" -R "$REPO" --title "Fragata Host $CHANNEL packages" \
     --notes "Signed packages of the Fragata Host $CHANNEL repository. Use the repository, not these files directly."
 
-existing=$(gh release view "$TAG" -R "$REPO" --json assets --jq '.assets[].name')
+# assets: "<name> sha256:<digest>"
+RELEASE_ID=$(gh api "repos/$REPO/releases/tags/$TAG" --jq .id)
+assets() { gh api --paginate "repos/$REPO/releases/$RELEASE_ID/assets?per_page=100" --jq '.[] | .name + " " + .digest'; }
+existing=$(assets)
 new=0
 for file in "$SRC"/packages/*.rpm; do
   name=$(basename "$file")
-  if ! printf '%s\n' "$existing" | grep -qxF "$name"; then
-    gh release upload "$TAG" -R "$REPO" "$file"
+  # a package rebuilt or signed again keeps its name: its asset is replaced
+  if ! printf '%s\n' "$existing" | grep -qxF "$name sha256:$(sha256sum "$file" | cut -d' ' -f1)"; then
+    gh release upload --clobber "$TAG" -R "$REPO" "$file"
     new=$((new + 1))
   fi
 done
 echo "$new packages uploaded"
-# the metadata point at the file names: every package must be an asset of that name
-existing=$(gh release view "$TAG" -R "$REPO" --json assets --jq '.assets[].name')
+# the metadata point at the file names and checksums: every package must be an asset of that name and content
+existing=$(assets)
 for file in "$SRC"/packages/*.rpm; do
-  printf '%s\n' "$existing" | grep -qxF "$(basename "$file")" || { echo "missing asset: $(basename "$file")" >&2; exit 1; }
+  name=$(basename "$file")
+  printf '%s\n' "$existing" | grep -qxF "$name sha256:$(sha256sum "$file" | cut -d' ' -f1)" ||
+    { echo "missing or different asset: $name" >&2; exit 1; }
 done
 
 # metadata on GitHub Pages
