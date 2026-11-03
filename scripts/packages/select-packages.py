@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # Packages of the Fragata Host repository: the packages of the ISO and the optional ones (extras.txt), at their latest
 # version in the XCP-ng repositories (base, updates, LINSTOR), and the closure of their dependencies.
-# usage: select-packages.py <upstream ISO> <output TSV: name, repository URL, location, size, sha256> [<extras list>]
+# usage: select-packages.py <upstream ISO or base-packages.txt> <output TSV: name, repository URL, location, size, sha256>
+#        [<extras list> [<base-packages.txt to write, from an ISO>]]
 import gzip, subprocess, sys, urllib.request, xml.etree.ElementTree as ET, re
 NS = {'r': 'http://linux.duke.edu/metadata/repo', 'c': 'http://linux.duke.edu/metadata/common', 'rpm': 'http://linux.duke.edu/metadata/rpm'}
 ISO, OUTPUT = sys.argv[1], sys.argv[2]
@@ -53,9 +54,18 @@ for pkg in latest.values():
     for cap in pkg['prov'] + [pkg['name']]:
         providers.setdefault(cap, []).append(pkg)
 
-iso_names = subprocess.run(['xorriso', '-osirrox', 'on', '-indev', ISO, '-find', '/Packages', '-name', '*.rpm'],
-                           capture_output=True, text=True).stdout.split()
-names = {re.sub(r'-[^-]+-[^-]+\.[^.]+\.rpm$', '', n.strip("'").split('/')[-1]) for n in iso_names}
+if ISO.endswith('.txt'):
+    # the names of the packages of the ISO, one per line (base-packages.txt): the CI has no ISO
+    names = {l.strip() for l in open(ISO) if l.strip() and not l.startswith('#')}
+else:
+    iso_names = subprocess.run(['xorriso', '-osirrox', 'on', '-indev', ISO, '-find', '/Packages', '-name', '*.rpm'],
+                               capture_output=True, text=True).stdout.split()
+    names = {re.sub(r'-[^-]+-[^-]+\.[^.]+\.rpm$', '', n.strip("'").split('/')[-1]) for n in iso_names}
+    if len(sys.argv) > 4:
+        # writes the names, for the selections made without the ISO
+        with open(sys.argv[4], 'w') as f:
+            f.write('# packages of the XCP-ng 8.3 ISO, written by select-packages.py\n')
+            f.write(''.join(n + '\n' for n in sorted(names)))
 iso_count = len(names)
 if EXTRAS:
     extras = {l.strip() for l in open(EXTRAS) if l.strip() and not l.startswith('#')}

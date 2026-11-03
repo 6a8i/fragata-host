@@ -26,6 +26,7 @@ FPR=$(gpg2 --list-secret-keys --with-colons --with-fingerprint | awk -F: '/^fpr/
 
 # upstream packages: checksum of the metadata, then signature of XCP-ng
 rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-xcpng
+rpm --import "$KEYS/RPM-GPG-KEY-fragata"
 XCPNG_KEY=3fd3ac9e
 # packages built by Fragata replace the upstream ones of the same name, and the ones they obsolete
 OWN_NAMES=$(for f in "$OWN"/*.rpm; do
@@ -75,6 +76,9 @@ while read -r src; do
   safe=$(basename "$src" | sed -e 's/[^A-Za-z0-9._-]/./g' -e 's/\.\.*/./g')
   if grep -qxF "$(printf '%s\t%s' "$sha" "$safe")" "$MANIFEST" && [ -f "$OUT/packages/$safe" ]; then
     mv "$OUT/packages/$safe" "$NEW/"
+  elif rpm -Kv "$src" 2>/dev/null | grep -q "key ID $(echo "$FPR" | tail -c 9 | tr 'A-F' 'a-f'): OK"; then
+    # already signed by the Fragata Host key (e.g. a Fragata package taken from the published channel)
+    cp "$src" "$NEW/$safe"
   else
     cp "$src" "$TOSIGN/$safe"
   fi
@@ -89,6 +93,12 @@ echo "$signed packages newly signed"
 rm -rf "$OUT/packages" "$TOSIGN" "$SOURCES"
 mv "$NEW" "$OUT/packages"
 mv "$OUT/signed.new.tsv" "$MANIFEST"
+# the selection the repository is made of and its Fragata packages, published with it: the next update compares
+# against the selection and takes the Fragata packages back from the channel
+cp "$SELECTION" "$OUT/selection.tsv"
+for f in "$OWN"/*.x86_64.rpm "$OWN"/*.noarch.rpm; do
+  [ ! -f "$f" ] || basename "$f" | sed -e 's/[^A-Za-z0-9._-]/./g' -e 's/\.\.*/./g'
+done >"$OUT/own.txt"
 
 # metadata: the packages are downloaded from PACKAGES_URL
 rm -rf "$OUT/repo/repodata"

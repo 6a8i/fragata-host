@@ -1,21 +1,24 @@
 #!/bin/sh
 # Publishes the Fragata Host package repository made by build-repo.sh on GitHub:
 # - the packages as assets of the release `packages-<version>` of the updates repository (only the new ones are
-#   uploaded);
-# - the metadata and the public key on its `gh-pages` branch, served by GitHub Pages under <version>/x86_64/.
+#   uploaded), shared by the channels of the version: a package keeps its name, a new version has a new name;
+# - the metadata, the selection and the manifest of the signed packages (what the next update starts from) and the
+#   public key on its `gh-pages` branch, served by GitHub Pages under <channel>/x86_64/.
 #
 # usage: publish-repo.sh <build-repo output dir> <owner/repository> <version, e.g. 8.3> [testing]
-# needs: gh (authenticated), git
+#   testing: the channel <version>-testing (repository fragata-testing of the hosts), promoted with promote-channel.sh
+# needs: gh (authenticated), git; GH_TOKEN, when set, also authenticates the push of gh-pages (CI)
 set -eu
 SRC=$(cd "$1" && pwd)
 REPO=$2
 VERSION=$3
 CHANNEL=$VERSION${4:+-$4}
-TAG=packages-$CHANNEL
+TAG=packages-$VERSION
+REMOTE=https://${GH_TOKEN:+x-access-token:$GH_TOKEN@}github.com/$REPO.git
 
 gh release view "$TAG" -R "$REPO" >/dev/null 2>&1 ||
-  gh release create "$TAG" -R "$REPO" --title "Fragata Host $CHANNEL packages" \
-    --notes "Signed packages of the Fragata Host $CHANNEL repository. Use the repository, not these files directly."
+  gh release create "$TAG" -R "$REPO" --title "Fragata Host $VERSION packages" \
+    --notes "Signed packages of the Fragata Host $VERSION repositories. Use the repositories, not these files directly."
 
 # assets: "<name> sha256:<digest>"
 RELEASE_ID=$(gh api "repos/$REPO/releases/tags/$TAG" --jq .id)
@@ -42,13 +45,16 @@ done
 # metadata on GitHub Pages
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-if ! git clone -q --depth 1 -b gh-pages "https://github.com/$REPO.git" "$WORK/site" 2>/dev/null; then
+if ! git clone -q --depth 1 -b gh-pages "$REMOTE" "$WORK/site" 2>/dev/null; then
   git init -q -b gh-pages "$WORK/site"
-  git -C "$WORK/site" remote add origin "https://github.com/$REPO.git"
+  git -C "$WORK/site" remote add origin "$REMOTE"
 fi
 mkdir -p "$WORK/site/$CHANNEL/x86_64"
 rm -rf "$WORK/site/$CHANNEL/x86_64/repodata"
 cp -r "$SRC/repo/repodata" "$WORK/site/$CHANNEL/x86_64/"
+for state in selection.tsv signed.tsv own.txt; do
+  [ ! -f "$SRC/$state" ] || cp "$SRC/$state" "$WORK/site/$CHANNEL/"
+done
 cp "$SRC/repo/RPM-GPG-KEY-fragata" "$WORK/site/"
 touch "$WORK/site/.nojekyll"
 cat >"$WORK/site/index.html" <<'EOF'
