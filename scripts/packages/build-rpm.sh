@@ -3,8 +3,10 @@
 # usage: build-rpm.sh <package repository> <output directory>
 # needs podman (or docker) and the image ghcr.io/xcp-ng/xcp-ng-build-env:8.3
 set -eu
-SRC=$(cd "$1" && pwd)
-OUT=$(mkdir -p "$2" && cd "$2" && pwd)
+# Git Bash on Windows: Windows paths for the engine, and no conversion of the container paths
+export MSYS_NO_PATHCONV=1
+SRC=$(cd "$1" && { pwd -W 2>/dev/null || pwd; })
+OUT=$(mkdir -p "$2" && cd "$2" && { pwd -W 2>/dev/null || pwd; })
 ENGINE=${ENGINE:-podman}
 "$ENGINE" run --rm -v "$SRC:/src:ro" -v "$OUT:/out" ghcr.io/xcp-ng/xcp-ng-build-env:8.3 sh -ec '
   mkdir -p ~/rpmbuild/SPECS ~/rpmbuild/SOURCES

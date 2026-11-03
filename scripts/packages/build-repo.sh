@@ -27,15 +27,23 @@ FPR=$(gpg2 --list-secret-keys --with-colons --with-fingerprint | awk -F: '/^fpr/
 # upstream packages: checksum of the metadata, then signature of XCP-ng
 rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-xcpng
 XCPNG_KEY=3fd3ac9e
-# packages built by Fragata replace the upstream ones of the same name
-OWN_NAMES=$(for f in "$OWN"/*.rpm; do rpm -qp --qf '%{NAME}\n' "$f" 2>/dev/null; done | sort -u)
+# packages built by Fragata replace the upstream ones of the same name, and the ones they obsolete
+OWN_NAMES=$(for f in "$OWN"/*.rpm; do
+  rpm -qp --qf '%{NAME}\n' "$f" 2>/dev/null
+  rpm -qp --obsoletes "$f" 2>/dev/null | awk '{print $1}'
+done | sort -u)
 is_own() { printf '%s\n' "$OWN_NAMES" | grep -qxF "$1"; }
 while IFS="$(printf '\t')" read -r name repo location size sha; do
   case $name in xcp-ng-release | xcp-ng-release-*) continue ;; esac
   is_own "$name" && continue
   file="$OUT/upstream/$(basename "$location")"
   if [ ! -f "$file" ] || ! echo "$sha  $file" | sha256sum -c --status; then
-    curl -sfL -o "$file" "$UPSTREAM/$repo/x86_64/$location"
+    # repository: its URL, or (older selections) its name in the XCP-ng updates server
+    case $repo in
+      https://*) url=$repo$location ;;
+      *) url=$UPSTREAM/$repo/x86_64/$location ;;
+    esac
+    curl -sfL -o "$file" "$url"
     echo "$sha  $file" | sha256sum -c --status || { echo "checksum mismatch: $location" >&2; exit 1; }
     rpm -Kv "$file" | grep -q "key ID $XCPNG_KEY: OK" || { echo "not signed by XCP-ng: $location" >&2; exit 1; }
   fi

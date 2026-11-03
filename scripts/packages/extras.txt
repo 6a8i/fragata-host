@@ -1,0 +1,30 @@
+# Optional packages of the Fragata Host repository: not installed by the ISO, installed on demand (yum install, or the
+# orchestrator for XOSTOR). Their dependencies are added too. One package name per line.
+
+# XOSTOR: hyperconverged storage replicated between the hosts of a pool (LINSTOR / DRBD)
+xcp-ng-linstor
+
+# ZFS local storage
+zfs
+kmod-zfs-4.19.0+1
+
+# SMAPIv3 storage (and its ZFS volume plugin)
+xcp-ng-xapi-storage
+xcp-ng-xapi-storage-volume-zfsvol
+
+# GlusterFS (Ceph needs packages of CentOS that the channel does not carry)
+glusterfs-server
+
+# monitoring
+netdata-ui
+
+# administration tools
+bind-utils
+iperf3
+lldpd
+nvme-cli
+tmux
+vim-enhanced
+
+# guest templates
+guest-templates-json-data-windows-11
