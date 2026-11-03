@@ -13,7 +13,13 @@ rebuild-srpms.sh sources.tsv <output dir> [<binary package name>...]
 
 `rebuild-srpms.sh` checks each SRPM (checksum of the Source repository, upstream signature) before its build, keeps
 the binaries in `<output>/rpms/<srpm>/` and records the result of each build in `<output>/results.tsv`; a SRPM
-already built is skipped, so a run can be resumed.
+already built is skipped, so a run can be resumed, and one that failed is built again.
+
+The build environment only has the build dependencies of the XCP-ng packages; the channel also has packages of
+CentOS 7. Their build dependencies come from a buildroot of CentOS 7.9 and EPEL 7 archives, below the XCP-ng
+repositories (yum priorities), and they regenerate their `configure` with the autoconf of CentOS 7. A build that
+hangs stops after `TIMEOUT` seconds; one whose tests fail or hang in the container (`%check`) is built again without
+them, recorded as `ok-nocheck`.
 
 The packages of LINBIT for XOSTOR (`linstor-*`, `drbd-reactor`) have no published SRPM: they stay binaries.
 

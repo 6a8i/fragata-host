@@ -2,10 +2,15 @@
 # Phase 2 of Fragata Host: rebuilds the SRPMs of the channel (select-sources.py) in the XCP-ng 8.3 build
 # environment, one container per SRPM. Each SRPM is checked (checksum, XCP-ng signature) before its build; the
 # binaries land in <output>/rpms/<srpm>/, the result of each build in <output>/results.tsv (srpm, status, seconds),
-# its log in <output>/logs/. A SRPM already built is skipped.
+# its log in <output>/logs/. A SRPM already built is skipped, one that failed is built again.
+#
+# The build environment only has the build dependencies of the XCP-ng packages: the buildroot adds CentOS 7.9 and
+# EPEL 7 (archives), below the XCP-ng repositories (yum priorities), for the CentOS packages of the channel. The
+# metadata of the repositories are downloaded once, in <output>/yumcache.
 #
 # usage: rebuild-srpms.sh <sources TSV> <output dir> [<binary package name>...]
 #   names: only the SRPMs of these binary packages (a pilot); default: every SRPM
+#   TIMEOUT: seconds a build may take (default 10800), so a hung test does not stop the rebuild
 # needs podman (or docker) and the image ghcr.io/xcp-ng/xcp-ng-build-env:8.3
 set -eu
 SOURCES=$1
@@ -15,8 +20,39 @@ OUT_DIR=$(cd "$2" && pwd)
 OUT=$(cd "$2" && { pwd -W 2>/dev/null || pwd; })
 shift 2
 ENGINE=${ENGINE:-podman}
-mkdir -p "$OUT_DIR/srpms" "$OUT_DIR/rpms" "$OUT_DIR/logs"
+TIMEOUT=${TIMEOUT:-10800}
+mkdir -p "$OUT_DIR/srpms" "$OUT_DIR/rpms" "$OUT_DIR/logs" "$OUT_DIR/yumcache"
 touch "$OUT_DIR/results.tsv"
+
+cat >"$OUT_DIR/buildroot.repo" <<'EOF'
+[fragata-buildroot-centos]
+name=CentOS 7.9 (build dependencies)
+baseurl=https://archive.kernel.org/centos-vault/7.9.2009/os/$basearch/
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
+priority=50
+
+[fragata-buildroot-centos-updates]
+name=CentOS 7.9 updates (build dependencies)
+baseurl=https://archive.kernel.org/centos-vault/7.9.2009/updates/$basearch/
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
+priority=50
+
+[fragata-buildroot-centos-extras]
+name=CentOS 7.9 extras (build dependencies)
+baseurl=https://archive.kernel.org/centos-vault/7.9.2009/extras/$basearch/
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
+priority=50
+
+[fragata-buildroot-epel]
+name=EPEL 7 (build dependencies)
+baseurl=https://archives.fedoraproject.org/pub/archive/epel/7/$basearch/
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-7
+priority=60
+EOF
 
 while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
   if [ $# -gt 0 ]; then
@@ -35,17 +71,22 @@ while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
   fi
   start=$(date +%s)
   rm -rf "$OUT_DIR/rpms/$srpm" && mkdir -p "$OUT_DIR/rpms/$srpm"
+  # the CentOS packages regenerate their configure with the autoconf of CentOS 7 (2.69), not the newer one of
+  # the XCP-ng updates
+  builddep_opts=
+  case $srpm in *.el7*) builddep_opts=--setopt=xcp-ng-updates.exclude=autoconf ;; esac
   # Git Bash on Windows: no conversion of the container paths
-  if MSYS_NO_PATHCONV=1 "$ENGINE" run --rm -v "$OUT:/work" ghcr.io/xcp-ng/xcp-ng-build-env:8.3 sh -ec "
+  if MSYS_NO_PATHCONV=1 "$ENGINE" run --rm -v "$OUT:/work" -v "$OUT/yumcache:/var/cache/yum" ghcr.io/xcp-ng/xcp-ng-build-env:8.3 sh -ec "
       rpm -K /work/srpms/$srpm | grep -qi 'pgp' || { echo 'not signed'; exit 1; }
-      sudo yum-builddep -y /work/srpms/$srpm
+      sudo cp /work/buildroot.repo /etc/yum.repos.d/
+      sudo yum-builddep -y $builddep_opts /work/srpms/$srpm
       # build dependencies may set up their tools in profile.d (the OCaml toolchain of xs-opam-repo)
       for profile in /etc/profile.d/*.sh; do . \$profile; done
-      if ! rpmbuild --rebuild /work/srpms/$srpm; then
-        # the tests of some packages depend on the build machine (e.g. file descriptors in a container): when only
-        # %check failed, the package is built again without them, and recorded as such
-        grep -q 'Bad exit status from .* (%check)' /work/logs/$srpm.log 2>/dev/null || exit 1
-        rpmbuild --rebuild --nocheck /work/srpms/$srpm
+      if ! timeout $TIMEOUT rpmbuild --rebuild /work/srpms/$srpm; then
+        # the tests of some packages depend on the build machine (e.g. file descriptors or IPv6 in a container), or
+        # hang there: when the build reached %check, the package is built again without them, and recorded as such
+        grep -q 'Executing(%check)' /work/logs/$srpm.log 2>/dev/null || exit 1
+        timeout $TIMEOUT rpmbuild --rebuild --nocheck /work/srpms/$srpm
         touch /work/rpms/$srpm/.nocheck
       fi
       # the channel never ships debuginfo packages
@@ -58,6 +99,9 @@ while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
   else
     status=failed
   fi
-  printf '%s\t%s\t%s\n' "$srpm" "$status" $(($(date +%s) - start)) >>"$OUT_DIR/results.tsv"
+  # the last result of a SRPM replaces the previous ones
+  grep -vE "^$srpm	" "$OUT_DIR/results.tsv" >"$OUT_DIR/results.tsv.new" || true
+  printf '%s\t%s\t%s\n' "$srpm" "$status" $(($(date +%s) - start)) >>"$OUT_DIR/results.tsv.new"
+  mv "$OUT_DIR/results.tsv.new" "$OUT_DIR/results.tsv"
   echo "$srpm: $status ($(($(date +%s) - start)) s)"
 done <"$SOURCES"
