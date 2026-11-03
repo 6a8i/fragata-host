@@ -88,7 +88,8 @@ while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
   builddep_opts=
   case $srpm in *.el7*) builddep_opts=--setopt=xcp-ng-updates.exclude=autoconf ;; esac
   # Git Bash on Windows: no conversion of the container paths
-  if MSYS_NO_PATHCONV=1 "$ENGINE" run --rm --memory "$BUILD_MEMORY" -e RPM_BUILD_NCPUS="$BUILD_CPUS" -v "$OUT:/work" -v "$OUT/yumcache:/var/cache/yum" ghcr.io/xcp-ng/xcp-ng-build-env:8.3 sh -ec "
+  # the builds run as root (configure of tar, coreutils) without a terminal (ncurses)
+  if MSYS_NO_PATHCONV=1 "$ENGINE" run --rm --memory "$BUILD_MEMORY" -e RPM_BUILD_NCPUS="$BUILD_CPUS"       -e FORCE_UNSAFE_CONFIGURE=1 -e TERM=xterm -v "$OUT:/work" -v "$OUT/yumcache:/var/cache/yum" ghcr.io/xcp-ng/xcp-ng-build-env:8.3 sh -ec "
       rpm -K /work/srpms/$srpm | grep -qi 'pgp' || { echo 'not signed'; exit 1; }
       # the XCP-ng repositories first: the buildroot only for the build dependencies they lack (a failed
       # transaction installs nothing)
@@ -97,13 +98,19 @@ while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
         sudo cp /work/buildroot.repo /etc/yum.repos.d/
         sudo yum-builddep -y $builddep_opts /work/srpms/$srpm
       fi
+      # the rpm of EL7 cannot generate the build dependencies of the pyproject macros: pip builds the wheel
+      if rpm -qp --requires /work/srpms/$srpm | grep -qE '^(pyproject-rpm-macros|python3-wheel)'; then
+        sudo yum install -y python3-pip
+      fi
       # build dependencies may set up their tools in profile.d (the OCaml toolchain of xs-opam-repo)
       for profile in /etc/profile.d/*.sh; do . \$profile; done
-      if ! timeout $TIMEOUT rpmbuild --rebuild /work/srpms/$srpm; then
+      # the cmake macros of the build environment build out of the source tree, the specs written for the cmake of
+      # EL7 run make in it
+      if ! timeout $TIMEOUT rpmbuild --rebuild --define '__cmake_in_source_build 1' /work/srpms/$srpm; then
         # the tests of some packages depend on the build machine (e.g. file descriptors or IPv6 in a container), or
         # hang there: when the build reached %check, the package is built again without them, and recorded as such
         grep -q 'Executing(%check)' /work/logs/$srpm.log 2>/dev/null || exit 1
-        timeout $TIMEOUT rpmbuild --rebuild --nocheck /work/srpms/$srpm
+        timeout $TIMEOUT rpmbuild --rebuild --nocheck --define '__cmake_in_source_build 1' /work/srpms/$srpm
         touch /work/rpms/$srpm/.nocheck
       fi
       # the channel never ships debuginfo packages

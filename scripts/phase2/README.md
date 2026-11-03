@@ -19,7 +19,9 @@ The build environment only has the build dependencies of the XCP-ng packages; th
 CentOS 7. Their build dependencies come from a buildroot of CentOS 7.9 and EPEL 7 archives, below the XCP-ng
 repositories (yum priorities), and they regenerate their `configure` with the autoconf of CentOS 7. A build that
 hangs stops after `TIMEOUT` seconds; one whose tests fail or hang in the container (`%check`) is built again without
-them, recorded as `ok-nocheck`.
+them, recorded as `ok-nocheck`. The cmake of the build environment builds out of the source tree, the specs written
+for the cmake of EL7 do not: the builds run in the source tree. The rpm of EL7 cannot generate the build dependencies
+of the pyproject macros: pip is installed for the packages that use them.
 
 The packages of LINBIT for XOSTOR (`linstor-*`, `drbd-reactor`) have no published SRPM: they stay binaries.
 
