@@ -44,6 +44,8 @@ done
 mkdir "$WORK/installimg"
 (cd "$WORK/installimg" && bzcat ../install.img.orig | cpio -idm --quiet)
 python3 "$HERE/brand-installer.py" "$WORK/installimg/opt/xensource/installer/version.py"
+# with the Fragata Host packages, the installer imports the keys of the Fragata Host channel
+[ -z "$PACKAGES" ] || python3 "$HERE/channel-installer.py" "$WORK/installimg/opt/xensource/installer/backend.py"
 (cd "$WORK/installimg" && find . | cpio -o -H newc --quiet | bzip2 -9 >"$WORK/install.img")
 
 set -- \
