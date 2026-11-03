@@ -48,7 +48,10 @@ while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
         rpmbuild --rebuild --nocheck /work/srpms/$srpm
         touch /work/rpms/$srpm/.nocheck
       fi
-      cp ~/rpmbuild/RPMS/*/*.rpm /work/rpms/$srpm/
+      # the channel never ships debuginfo packages
+      for rpm in ~/rpmbuild/RPMS/*/*.rpm; do
+        case \$rpm in *-debuginfo-*) ;; *) cp \$rpm /work/rpms/$srpm/ ;; esac
+      done
     " >"$OUT_DIR/logs/$srpm.log" 2>&1; then
     status=ok
     [ ! -f "$OUT_DIR/rpms/$srpm/.nocheck" ] || status=ok-nocheck
