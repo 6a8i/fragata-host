@@ -66,31 +66,13 @@ gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-7
 priority=60
 EOF
 
-while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
-  if [ $# -gt 0 ]; then
-    wanted=
-    for name in "$@"; do
-      case ",$binaries," in *",$name,"*) wanted=1 ;; esac
-    done
-    [ -n "$wanted" ] || continue
-  fi
-  # exact names: a SRPM name may hold regular expression characters (kernel-alt-4.19.322+1)
-  awk -F'\t' -v srpm="$srpm" '$1 == srpm && $2 ~ /^ok(-nocheck)?$/ { found = 1 } END { exit !found }' \
-    "$OUT_DIR/results.tsv" && continue
-  file="$OUT_DIR/srpms/$srpm"
-  if [ ! -f "$file" ] || ! echo "$sha  $file" | sha256sum -c --status; then
-    # --ssl-no-revoke: the curl of Windows fails when it cannot reach the revocation servers (no-op elsewhere)
-    curl -sfL --ssl-no-revoke -o "$file" "$repo$location" || { printf '%s\tdownload\t0\n' "$srpm" >>"$OUT_DIR/results.tsv"; continue; }
-    echo "$sha  $file" | sha256sum -c --status || { printf '%s\tchecksum\t0\n' "$srpm" >>"$OUT_DIR/results.tsv"; continue; }
-  fi
-  start=$(date +%s)
-  rm -rf "$OUT_DIR/rpms/$srpm" && mkdir -p "$OUT_DIR/rpms/$srpm"
-  case $srpm in
-    *.el7*)
-      # a package of CentOS 7: the channel ships the binary CentOS built, against CentOS 7 (OpenSSL 1.0.2, curl 7.29,
-      # the kernel headers of 3.10), so it is built in a clean CentOS 7.9, with the CentOS release tag (el7_9...)
+# builds $srpm in a buildroot (centos, xcpng), its output appended to its log
+build_in() {
+  # the release tag the package of CentOS 7 or EPEL 7 was built with (el7, el7_9, el7.centos)
+  dist=$(echo "$srpm" | grep -oE '\.el7(_[0-9]+)?(\.centos)?' | head -1)
+  case $1 in
+    centos)
       image=quay.io/centos/centos:centos7
-      dist=$(echo "$srpm" | grep -o '\.el7[_0-9]*' | head -1)
       setup="
         rm -f /etc/yum.repos.d/*.repo
         sed '/^exclude=/d' /work/buildroot.repo >/etc/yum.repos.d/buildroot.repo
@@ -107,7 +89,7 @@ while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
       cache=yumcache-centos
       rpmbuild_opts="--define 'dist $dist'"
       ;;
-    *)
+    xcpng)
       image=ghcr.io/xcp-ng/xcp-ng-build-env:8.3
       # what the build environment holds differs from the buildroot the package was built in
       fixes=
@@ -120,6 +102,8 @@ while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
         # a cmocka older than 1.1.3: samba builds and ships its own
         samba-*) builddep_opts=
           fixes='sudo yum downgrade -y libcmocka-1.1.2-1.el7 libcmocka-devel-1.1.2-1.el7' ;;
+        # the packages of CentOS regenerate their configure with the autoconf of CentOS 7 (2.69)
+        *.el7*) builddep_opts=--setopt=xcp-ng-updates.exclude=autoconf ;;
         *) builddep_opts= ;;
       esac
       setup="
@@ -141,13 +125,14 @@ while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
       # the cmake macros of the build environment build out of the source tree, the specs written for the cmake of
       # EL7 run make in it
       rpmbuild_opts="--define '__cmake_in_source_build 1'"
+      [ -z "$dist" ] || rpmbuild_opts="$rpmbuild_opts --define 'dist $dist'"
       ;;
   esac
   mkdir -p "$OUT_DIR/$cache"
   # Git Bash on Windows: no conversion of the container paths
   # the builds run as root (configure of tar, coreutils) without a terminal (ncurses)
-  if MSYS_NO_PATHCONV=1 "$ENGINE" run --rm --memory "$BUILD_MEMORY" -e RPM_BUILD_NCPUS="$BUILD_CPUS" \
-      -e FORCE_UNSAFE_CONFIGURE=1 -e TERM=xterm -v "$OUT:/work" -v "$OUT/$cache:/var/cache/yum" "$image" sh -ec "
+  MSYS_NO_PATHCONV=1 "$ENGINE" run --rm --memory "$BUILD_MEMORY" -e RPM_BUILD_NCPUS="$BUILD_CPUS" \
+    -e FORCE_UNSAFE_CONFIGURE=1 -e TERM=xterm -v "$OUT:/work" -v "$OUT/$cache:/var/cache/yum" "$image" sh -ec "
       rpm -K /work/srpms/$srpm | grep -qi 'pgp' || { echo 'not signed'; exit 1; }
       $setup
       if ! timeout $TIMEOUT rpmbuild --rebuild $rpmbuild_opts --define '_smp_mflags -j$BUILD_CPUS' /work/srpms/$srpm; then
@@ -161,7 +146,42 @@ while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
       for rpm in ~/rpmbuild/RPMS/*/*.rpm; do
         case \$rpm in *-debuginfo-*) ;; *) cp \$rpm /work/rpms/$srpm/ ;; esac
       done
-    " >"$OUT_DIR/logs/$srpm.log" 2>&1; then
+    " >>"$OUT_DIR/logs/$srpm.log" 2>&1 || return 1
+  echo "$1" >"$OUT_DIR/rpms/$srpm/.buildroot"
+}
+
+while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
+  if [ $# -gt 0 ]; then
+    wanted=
+    for name in "$@"; do
+      case ",$binaries," in *",$name,"*) wanted=1 ;; esac
+    done
+    [ -n "$wanted" ] || continue
+  fi
+  # exact names: a SRPM name may hold regular expression characters (kernel-alt-4.19.322+1)
+  awk -F'\t' -v srpm="$srpm" '$1 == srpm && $2 ~ /^ok(-nocheck)?$/ { found = 1 } END { exit !found }' \
+    "$OUT_DIR/results.tsv" && continue
+  file="$OUT_DIR/srpms/$srpm"
+  if [ ! -f "$file" ] || ! echo "$sha  $file" | sha256sum -c --status; then
+    # --ssl-no-revoke: the curl of Windows fails when it cannot reach the revocation servers (no-op elsewhere)
+    curl -sfL --ssl-no-revoke -o "$file" "$repo$location" || { printf '%s\tdownload\t0\n' "$srpm" >>"$OUT_DIR/results.tsv"; continue; }
+    echo "$sha  $file" | sha256sum -c --status || { printf '%s\tchecksum\t0\n' "$srpm" >>"$OUT_DIR/results.tsv"; continue; }
+  fi
+  start=$(date +%s)
+  rm -rf "$OUT_DIR/rpms/$srpm" && mkdir -p "$OUT_DIR/rpms/$srpm"
+  : >"$OUT_DIR/logs/$srpm.log"
+  # the status of the build, kept apart from set -e
+  rc=0
+  case $srpm in
+    # a package of CentOS 7 or EPEL 7: the channel ships the binary they built, against CentOS 7 (OpenSSL 1.0.2,
+    # curl 7.29, the kernel headers of 3.10), so it is built in a clean CentOS 7.9; those it no longer builds with (a
+    # package of CentOS 7.5 that needs the bind of its time) build in the XCP-ng build environment, whose base is
+    # CentOS 7.5
+    *.el7*) { build_in centos || { echo '*** the CentOS 7.9 buildroot failed: the XCP-ng build environment'
+      build_in xcpng; }; } >>"$OUT_DIR/logs/$srpm.log" 2>&1 || rc=1 ;;
+    *) build_in xcpng || rc=1 ;;
+  esac
+  if [ $rc -eq 0 ]; then
     status=ok
     [ ! -f "$OUT_DIR/rpms/$srpm/.nocheck" ] || status=ok-nocheck
   else
