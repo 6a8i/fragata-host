@@ -4,16 +4,18 @@
 # binaries land in <output>/rpms/<srpm>/, the result of each build in <output>/results.tsv (srpm, status, seconds),
 # its log in <output>/logs/. A SRPM already built is skipped, one that failed is built again.
 #
-# The build environment only has the build dependencies of the XCP-ng packages: the buildroot adds CentOS 7.9 and
-# EPEL 7 (archives), below the XCP-ng repositories (yum priorities), when the XCP-ng repositories lack some. The
-# metadata of the repositories are downloaded once, in <output>/yumcache.
+# The packages of XCP-ng build in its build environment, which only has their build dependencies: the buildroot adds
+# CentOS 7.9 and EPEL 7 (archives), below the XCP-ng repositories (yum priorities), when the XCP-ng repositories lack
+# some. The packages of CentOS 7 build in a clean CentOS 7.9 from the same archives, as CentOS built them. The metadata
+# of the repositories are downloaded once, in <output>/yumcache and <output>/yumcache-centos.
 #
 # usage: rebuild-srpms.sh <sources TSV> <output dir> [<binary package name>...]
 #   names: only the SRPMs of these binary packages (a pilot); default: every SRPM
 #   TIMEOUT: seconds a build may take (default 3600), so a hung test does not stop the rebuild
 #   BUILD_CPUS, BUILD_MEMORY: parallel jobs (default 8) and memory (default 8g) of a build: the memory of a VM
 #   (podman machine, WSL) grows with the builds, and so does the swap of its host
-# needs podman (or docker) and the image ghcr.io/xcp-ng/xcp-ng-build-env:8.3
+# needs podman (or docker), the images ghcr.io/xcp-ng/xcp-ng-build-env:8.3 and quay.io/centos/centos:centos7, and the
+# EPEL 7 key in <output>/RPM-GPG-KEY-EPEL-7 (from /etc/pki/rpm-gpg of the build environment)
 set -eu
 SOURCES=$1
 mkdir -p "$2"
@@ -83,34 +85,76 @@ while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
   fi
   start=$(date +%s)
   rm -rf "$OUT_DIR/rpms/$srpm" && mkdir -p "$OUT_DIR/rpms/$srpm"
-  # the CentOS packages regenerate their configure with the autoconf of CentOS 7 (2.69), not the newer one of
-  # the XCP-ng updates
-  builddep_opts=
-  case $srpm in *.el7*) builddep_opts=--setopt=xcp-ng-updates.exclude=autoconf ;; esac
-  # Git Bash on Windows: no conversion of the container paths
-  # the builds run as root (configure of tar, coreutils) without a terminal (ncurses)
-  if MSYS_NO_PATHCONV=1 "$ENGINE" run --rm --memory "$BUILD_MEMORY" -e RPM_BUILD_NCPUS="$BUILD_CPUS"       -e FORCE_UNSAFE_CONFIGURE=1 -e TERM=xterm -v "$OUT:/work" -v "$OUT/yumcache:/var/cache/yum" ghcr.io/xcp-ng/xcp-ng-build-env:8.3 sh -ec "
-      rpm -K /work/srpms/$srpm | grep -qi 'pgp' || { echo 'not signed'; exit 1; }
-      # the XCP-ng repositories first: the buildroot only for the build dependencies they lack (a failed
-      # transaction installs nothing)
-      if ! sudo yum-builddep -y $builddep_opts /work/srpms/$srpm; then
-        echo 'build dependencies missing from the XCP-ng repositories: adding the buildroot'
-        sudo cp /work/buildroot.repo /etc/yum.repos.d/
-        sudo yum-builddep -y $builddep_opts /work/srpms/$srpm
-      fi
-      # the rpm of EL7 cannot generate the build dependencies of the pyproject macros: pip builds the wheel
-      if rpm -qp --requires /work/srpms/$srpm | grep -qE '^(pyproject-rpm-macros|python3-wheel)'; then
-        sudo yum install -y python3-pip
-      fi
-      # build dependencies may set up their tools in profile.d (the OCaml toolchain of xs-opam-repo)
-      for profile in /etc/profile.d/*.sh; do . \$profile; done
+  case $srpm in
+    *.el7*)
+      # a package of CentOS 7: the channel ships the binary CentOS built, against CentOS 7 (OpenSSL 1.0.2, curl 7.29,
+      # the kernel headers of 3.10), so it is built in a clean CentOS 7.9, with the CentOS release tag (el7_9...)
+      image=quay.io/centos/centos:centos7
+      dist=$(echo "$srpm" | grep -o '\.el7[_0-9]*' | head -1)
+      setup="
+        rm -f /etc/yum.repos.d/*.repo
+        sed '/^exclude=/d' /work/buildroot.repo >/etc/yum.repos.d/buildroot.repo
+        cp /work/RPM-GPG-KEY-EPEL-7 /etc/pki/rpm-gpg/
+        echo keepcache=1 >>/etc/yum.conf
+        # the build group of CentOS 7
+        yum install -y bzip2 cpio diffutils findutils gawk gcc gcc-c++ make patch redhat-rpm-config rpm-build sed tar \
+          unzip util-linux which xz yum-utils
+        # the packages of EPEL build with its macros (python36-...), which yum-builddep needs installed
+        if rpm -qp --qf '%{vendor}' /work/srpms/$srpm | grep -q Fedora; then
+          yum install -y epel-rpm-macros python3-rpm-macros
+        fi
+        yum-builddep -y /work/srpms/$srpm"
+      cache=yumcache-centos
+      rpmbuild_opts="--define 'dist $dist'"
+      ;;
+    *)
+      image=ghcr.io/xcp-ng/xcp-ng-build-env:8.3
+      # what the build environment holds differs from the buildroot the package was built in
+      fixes=
+      case $srpm in
+        # autoconf 2.70 and later compile in C11, where the initializer of a mask is not constant
+        irqbalance-*) builddep_opts=--setopt=xcp-ng-updates.exclude=autoconf ;;
+        # the autoconf of its configure (2.69), gtkdocize, and no C++ library (built when g++ is there)
+        gnutls-*) builddep_opts=--setopt=xcp-ng-updates.exclude=autoconf
+          fixes='sudo yum install -y gtk-doc && sudo rpm -e --nodeps gcc-c++' ;;
+        # a cmocka older than 1.1.3: samba builds and ships its own
+        samba-*) builddep_opts=
+          fixes='sudo yum downgrade -y libcmocka-1.1.2-1.el7 libcmocka-devel-1.1.2-1.el7' ;;
+        *) builddep_opts= ;;
+      esac
+      setup="
+        # the XCP-ng repositories first: the buildroot only for the build dependencies they lack (a failed
+        # transaction installs nothing)
+        if ! sudo yum-builddep -y $builddep_opts /work/srpms/$srpm; then
+          echo 'build dependencies missing from the XCP-ng repositories: adding the buildroot'
+          sudo cp /work/buildroot.repo /etc/yum.repos.d/
+          sudo yum-builddep -y $builddep_opts /work/srpms/$srpm
+        fi
+        $fixes
+        # the rpm of EL7 cannot generate the build dependencies of the pyproject macros: pip builds the wheel
+        if rpm -qp --requires /work/srpms/$srpm | grep -qE '^(pyproject-rpm-macros|python3-wheel)'; then
+          sudo yum install -y python3-pip
+        fi
+        # build dependencies may set up their tools in profile.d (the OCaml toolchain of xs-opam-repo)
+        for profile in /etc/profile.d/*.sh; do . \$profile; done"
+      cache=yumcache
       # the cmake macros of the build environment build out of the source tree, the specs written for the cmake of
       # EL7 run make in it
-      if ! timeout $TIMEOUT rpmbuild --rebuild --define '__cmake_in_source_build 1' /work/srpms/$srpm; then
+      rpmbuild_opts="--define '__cmake_in_source_build 1'"
+      ;;
+  esac
+  mkdir -p "$OUT_DIR/$cache"
+  # Git Bash on Windows: no conversion of the container paths
+  # the builds run as root (configure of tar, coreutils) without a terminal (ncurses)
+  if MSYS_NO_PATHCONV=1 "$ENGINE" run --rm --memory "$BUILD_MEMORY" -e RPM_BUILD_NCPUS="$BUILD_CPUS" \
+      -e FORCE_UNSAFE_CONFIGURE=1 -e TERM=xterm -v "$OUT:/work" -v "$OUT/$cache:/var/cache/yum" "$image" sh -ec "
+      rpm -K /work/srpms/$srpm | grep -qi 'pgp' || { echo 'not signed'; exit 1; }
+      $setup
+      if ! timeout $TIMEOUT rpmbuild --rebuild $rpmbuild_opts --define '_smp_mflags -j$BUILD_CPUS' /work/srpms/$srpm; then
         # the tests of some packages depend on the build machine (e.g. file descriptors or IPv6 in a container), or
         # hang there: when the build reached %check, the package is built again without them, and recorded as such
         grep -q 'Executing(%check)' /work/logs/$srpm.log 2>/dev/null || exit 1
-        timeout $TIMEOUT rpmbuild --rebuild --nocheck --define '__cmake_in_source_build 1' /work/srpms/$srpm
+        timeout $TIMEOUT rpmbuild --rebuild --nocheck $rpmbuild_opts --define '_smp_mflags -j$BUILD_CPUS' /work/srpms/$srpm
         touch /work/rpms/$srpm/.nocheck
       fi
       # the channel never ships debuginfo packages

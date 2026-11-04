@@ -15,9 +15,12 @@ rebuild-srpms.sh sources.tsv <output dir> [<binary package name>...]
 the binaries in `<output>/rpms/<srpm>/` and records the result of each build in `<output>/results.tsv`; a SRPM
 already built is skipped, so a run can be resumed, and one that failed is built again.
 
-The build environment only has the build dependencies of the XCP-ng packages; the channel also has packages of
-CentOS 7. Their build dependencies come from a buildroot of CentOS 7.9 and EPEL 7 archives, below the XCP-ng
-repositories (yum priorities), and they regenerate their `configure` with the autoconf of CentOS 7. A build that
+The build environment only has the build dependencies of the XCP-ng packages; a buildroot of CentOS 7.9 and EPEL 7
+archives, below the XCP-ng repositories (yum priorities), adds those they lack. The channel also has packages of
+CentOS 7 and EPEL 7 (`.el7` releases): the channel ships the binaries CentOS and EPEL built, against OpenSSL 1.0.2,
+curl 7.29 and the kernel headers of 3.10, not the newer ones of XCP-ng, so they build in a clean CentOS 7.9 from the
+same archives, with their own release tag. The packages that need something else of their buildroot (an older
+autoconf or cmocka, no g++) say so in the script. A build that
 hangs stops after `TIMEOUT` seconds; one whose tests fail or hang in the container (`%check`) is built again without
 them, recorded as `ok-nocheck`. The cmake of the build environment builds out of the source tree, the specs written
 for the cmake of EL7 do not: the builds run in the source tree. The rpm of EL7 cannot generate the build dependencies
