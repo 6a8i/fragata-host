@@ -36,7 +36,8 @@ for name, repo, location, *_ in selection:
         continue
     needed.setdefault((source, srpm), []).append(name)
 
-with open(OUTPUT, 'w') as f:
+# LF lines on every platform (rebuild-srpms.sh reads them with sh)
+with open(OUTPUT, 'w', newline='\n') as f:
     for (source, srpm), binaries in sorted(needed.items(), key=lambda item: item[0][1]):
         location, size, sha = sources[(source, srpm)]
         f.write('%s\t%s\t%s\t%d\t%s\t%s\n' % (srpm, source, location, size, sha, ','.join(sorted(binaries))))

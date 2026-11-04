@@ -1,0 +1,33 @@
+# Build dependencies of the channel that XCP-ng builds itself and that the channel does not ship: the buildroot of
+# Fragata Host rebuilds them from their SRPMs too. Found in the logs of the builds in the XCP-ng build environment
+# (packages installed from the XCP-ng repositories, release .xcpng8.3, no rebuilt package of that name).
+autoconf
+cmake3
+cmake3-data
+cmake3-filesystem
+cmake3-rpm-macros
+devtoolset-11-binutils
+devtoolset-11-elfutils-devel
+devtoolset-11-elfutils-libelf-devel
+devtoolset-11-gcc
+devtoolset-11-gcc-c++
+devtoolset-11-liblsan-devel
+devtoolset-11-libstdc++-devel
+devtoolset-11-runtime
+dwarves
+ipxe-efi
+libcmocka-devel
+libdwarves1
+meson
+nasm
+ocaml
+ocaml-compiler-libs
+ocaml-findlib
+ocaml-ocamldoc
+ocaml-runtime
+opam
+pyproject-rpm-macros
+pyproject-srpm-macros
+python3-coverage
+socat
+xs-opam-repo

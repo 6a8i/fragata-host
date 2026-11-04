@@ -48,5 +48,25 @@ The builds run as root: an install that makes a file setuid only as root (gluste
 
 The packages of LINBIT for XOSTOR (`linstor-*`, `drbd-reactor`) have no published SRPM: they stay binaries.
 
-Next steps: build against the rebuilt packages instead of the upstream repositories (a build root of its own), then
-let `build-repo.sh` take the rebuilt binaries as Fragata packages.
+## The buildroot of Fragata Host
+
+```
+# the build tools XCP-ng builds itself and the channel does not ship (build-tools.txt): their SRPMs, then their builds
+select-build-tools.py build-tools.txt build-tools-selection.tsv
+select-sources.py build-tools-selection.tsv build-tools-sources.tsv
+TIMEOUT=10800 rebuild-srpms.sh build-tools-sources.tsv <output>
+# the image fragata-build-env:8.3: the packages of the XCP-ng build environment (buildroot-packages.txt)
+make-buildroot.sh <output>
+# every package again, in that image: its build dependencies are the rebuilt packages
+cat sources.tsv build-tools-sources.tsv >all-sources.tsv
+BUILD_ENV=fragata BUILDROOT_RPMS=<output>/rpms rebuild-srpms.sh all-sources.tsv <second output>
+```
+
+The image and the builds use no XCP-ng repository: the rebuilt packages first (a repository made in `<output>/rpms`),
+then CentOS 7.5 (the base of XCP-ng 8.3, which the packages of the channel match), CentOS 7.9 and EPEL 7 for what
+they lack. The packages of CentOS and EPEL still build in a clean CentOS 7.9. The release package of the buildroot
+gives the same dist tag (`.xcpng8.3`), so the rebuilt packages replace the binaries of the channel version for
+version; the builds of the XCP-ng build environment could take newer packages of its testing repositories, these
+take exactly those of the channel.
+
+Next step: let `build-repo.sh` take the rebuilt binaries as Fragata packages.

@@ -12,6 +12,9 @@
 # usage: rebuild-srpms.sh <sources TSV> <output dir> [<binary package name>...]
 #   names: only the SRPMs of these binary packages (a pilot); default: every SRPM
 #   TIMEOUT: seconds a build may take (default 3600), so a hung test does not stop the rebuild
+#   BUILD_ENV: xcpng (default) builds the packages of XCP-ng in the XCP-ng 8.3 build environment; fragata in the
+#   buildroot of Fragata Host (make-buildroot.sh, image FRAGATA_IMAGE), with the rebuilt packages of BUILDROOT_RPMS
+#   (the rpms directory of a previous run, with its repository) instead of the XCP-ng repositories
 #   BUILD_CPUS, BUILD_MEMORY: parallel jobs (default 8) and memory (default 8g) of a build: the memory of a VM
 #   (podman machine, WSL) grows with the builds, and so does the swap of its host
 # needs podman (or docker), the images ghcr.io/xcp-ng/xcp-ng-build-env:8.3 and quay.io/centos/centos:centos7, and the
@@ -27,6 +30,12 @@ ENGINE=${ENGINE:-podman}
 TIMEOUT=${TIMEOUT:-3600}
 BUILD_CPUS=${BUILD_CPUS:-8}
 BUILD_MEMORY=${BUILD_MEMORY:-8g}
+BUILD_ENV=${BUILD_ENV:-xcpng}
+FRAGATA_IMAGE=${FRAGATA_IMAGE:-fragata-build-env:8.3}
+if [ "$BUILD_ENV" = fragata ]; then
+  # the rebuilt packages with their repository (make-buildroot.sh), as the engine sees them
+  BUILDROOT_RPMS=$(cd "$BUILDROOT_RPMS" && { pwd -W 2>/dev/null || pwd; })
+fi
 mkdir -p "$OUT_DIR/srpms" "$OUT_DIR/rpms" "$OUT_DIR/logs" "$OUT_DIR/yumcache"
 touch "$OUT_DIR/results.tsv"
 
@@ -90,23 +99,40 @@ build_in() {
         fi
         yum-builddep -y /work/srpms/$srpm"
       cache=yumcache-centos
+      mounts=
       rpmbuild_opts="--define 'dist $dist'"
       ;;
     xcpng)
-      image=ghcr.io/xcp-ng/xcp-ng-build-env:8.3
+      if [ "$BUILD_ENV" = fragata ]; then
+        # the buildroot of Fragata Host (make-buildroot.sh): its repositories hold the build dependencies
+        image=$FRAGATA_IMAGE
+        tools=fragata
+        cache=yumcache-fragata
+        mounts="-v $BUILDROOT_RPMS:/buildroot:ro"
+        # its repositories already include the buildroot
+        add_buildroot=false
+      else
+        image=ghcr.io/xcp-ng/xcp-ng-build-env:8.3
+        tools=xcp-ng-updates
+        add_buildroot='sudo cp /work/buildroot.repo /etc/yum.repos.d/'
+        cache=yumcache
+        mounts=
+      fi
       # what the build environment holds differs from the buildroot the package was built in
       fixes=
       case $srpm in
         # autoconf 2.70 and later compile in C11, where the initializer of a mask is not constant
-        irqbalance-*) builddep_opts=--setopt=xcp-ng-updates.exclude=autoconf ;;
+        irqbalance-*) builddep_opts=--setopt=$tools.exclude=autoconf ;;
+        # binutils and gcc check for exactly autoconf 2.69
+        devtoolset-*) builddep_opts=--setopt=$tools.exclude=autoconf ;;
         # the autoconf of its configure (2.69), gtkdocize, and no C++ library (built when g++ is there)
-        gnutls-*) builddep_opts=--setopt=xcp-ng-updates.exclude=autoconf
+        gnutls-*) builddep_opts=--setopt=$tools.exclude=autoconf
           fixes='sudo yum install -y gtk-doc && sudo rpm -e --nodeps gcc-c++' ;;
         # a cmocka older than 1.1.3: samba builds and ships its own
         samba-*) builddep_opts=
-          fixes='sudo yum downgrade -y libcmocka-1.1.2-1.el7 libcmocka-devel-1.1.2-1.el7' ;;
+          fixes="sudo yum downgrade -y --disablerepo=$tools libcmocka-1.1.2-1.el7 libcmocka-devel-1.1.2-1.el7" ;;
         # the packages of CentOS regenerate their configure with the autoconf of CentOS 7 (2.69)
-        *.el7*) builddep_opts=--setopt=xcp-ng-updates.exclude=autoconf ;;
+        *.el7*) builddep_opts=--setopt=$tools.exclude=autoconf ;;
         *) builddep_opts= ;;
       esac
       setup="
@@ -114,7 +140,7 @@ build_in() {
         # transaction installs nothing)
         if ! sudo yum-builddep -y $builddep_opts /work/srpms/$srpm; then
           echo 'build dependencies missing from the XCP-ng repositories: adding the buildroot'
-          sudo cp /work/buildroot.repo /etc/yum.repos.d/
+          $add_buildroot
           sudo yum-builddep -y $builddep_opts /work/srpms/$srpm
         fi
         $fixes
@@ -124,10 +150,11 @@ build_in() {
         fi
         # build dependencies may set up their tools in profile.d (the OCaml toolchain of xs-opam-repo)
         for profile in /etc/profile.d/*.sh; do . \$profile; done"
-      cache=yumcache
       # the cmake macros of the build environment build out of the source tree, the specs written for the cmake of
       # EL7 run make in it
       rpmbuild_opts="--define '__cmake_in_source_build 1'"
+      # the spec of cmocka (for the cmake of the build environment) builds out of the source tree, as cmocka requires
+      case $srpm in cmocka-*) rpmbuild_opts= ;; esac
       [ -z "$dist" ] || rpmbuild_opts="$rpmbuild_opts --define 'dist $dist'"
       # the install of glusterfs makes fusermount-glusterfs setuid root when it runs as root, as the builds here do;
       # the upstream package, built as a user, is not
@@ -142,7 +169,7 @@ build_in() {
   # Git Bash on Windows: no conversion of the container paths
   # the builds run as root (configure of tar, coreutils) without a terminal (ncurses)
   MSYS_NO_PATHCONV=1 "$ENGINE" run --rm --memory "$BUILD_MEMORY" -e RPM_BUILD_NCPUS="$cpus" \
-    -e FORCE_UNSAFE_CONFIGURE=1 -e TERM=xterm -v "$OUT:/work" -v "$OUT/$cache:/var/cache/yum" "$image" sh -ec "
+    -e FORCE_UNSAFE_CONFIGURE=1 -e TERM=xterm -v "$OUT:/work" -v "$OUT/$cache:/var/cache/yum" $mounts "$image" sh -ec "
       rpm -K /work/srpms/$srpm | grep -qi 'pgp' || { echo 'not signed'; exit 1; }
       $setup
       if ! timeout $TIMEOUT rpmbuild --rebuild $rpmbuild_opts --define '_smp_mflags -j$cpus' /work/srpms/$srpm; then
@@ -157,7 +184,7 @@ build_in() {
         case \$rpm in *-debuginfo-*) ;; *) cp \$rpm /work/rpms/$srpm/ ;; esac
       done
     " >>"$OUT_DIR/logs/$srpm.log" 2>&1 || return 1
-  echo "$1" >"$OUT_DIR/rpms/$srpm/.buildroot"
+  if [ "$1" = xcpng ] && [ "$BUILD_ENV" = fragata ]; then echo fragata; else echo "$1"; fi >"$OUT_DIR/rpms/$srpm/.buildroot"
 }
 
 while IFS="$(printf '\t')" read -r srpm repo location size sha binaries; do
