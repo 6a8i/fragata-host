@@ -70,6 +70,9 @@ EOF
 build_in() {
   # the release tag the package of CentOS 7 or EPEL 7 was built with (el7, el7_9, el7.centos)
   dist=$(echo "$srpm" | grep -oE '\.el7(_[0-9]+)?(\.centos)?' | head -1)
+  # the C++ of dyninst takes more memory per job than a build has: its compilers crash with 8 jobs
+  cpus=$BUILD_CPUS
+  case $srpm in dyninst-*) [ "$cpus" -le 2 ] || cpus=2 ;; esac
   case $1 in
     centos)
       image=quay.io/centos/centos:centos7
@@ -126,20 +129,27 @@ build_in() {
       # EL7 run make in it
       rpmbuild_opts="--define '__cmake_in_source_build 1'"
       [ -z "$dist" ] || rpmbuild_opts="$rpmbuild_opts --define 'dist $dist'"
+      # the install of glusterfs makes fusermount-glusterfs setuid root when it runs as root, as the builds here do;
+      # the upstream package, built as a user, is not
+      case $srpm in
+        glusterfs-*) rpmbuild_opts="$rpmbuild_opts --define '__spec_install_post chmod u-s \
+%{buildroot}/usr/bin/fusermount-glusterfs; %{?__debug_package:%{__debug_install_post}} %{__arch_install_post} \
+%{__os_install_post}'" ;;
+      esac
       ;;
   esac
   mkdir -p "$OUT_DIR/$cache"
   # Git Bash on Windows: no conversion of the container paths
   # the builds run as root (configure of tar, coreutils) without a terminal (ncurses)
-  MSYS_NO_PATHCONV=1 "$ENGINE" run --rm --memory "$BUILD_MEMORY" -e RPM_BUILD_NCPUS="$BUILD_CPUS" \
+  MSYS_NO_PATHCONV=1 "$ENGINE" run --rm --memory "$BUILD_MEMORY" -e RPM_BUILD_NCPUS="$cpus" \
     -e FORCE_UNSAFE_CONFIGURE=1 -e TERM=xterm -v "$OUT:/work" -v "$OUT/$cache:/var/cache/yum" "$image" sh -ec "
       rpm -K /work/srpms/$srpm | grep -qi 'pgp' || { echo 'not signed'; exit 1; }
       $setup
-      if ! timeout $TIMEOUT rpmbuild --rebuild $rpmbuild_opts --define '_smp_mflags -j$BUILD_CPUS' /work/srpms/$srpm; then
+      if ! timeout $TIMEOUT rpmbuild --rebuild $rpmbuild_opts --define '_smp_mflags -j$cpus' /work/srpms/$srpm; then
         # the tests of some packages depend on the build machine (e.g. file descriptors or IPv6 in a container), or
         # hang there: when the build reached %check, the package is built again without them, and recorded as such
         grep -q 'Executing(%check)' /work/logs/$srpm.log 2>/dev/null || exit 1
-        timeout $TIMEOUT rpmbuild --rebuild --nocheck $rpmbuild_opts --define '_smp_mflags -j$BUILD_CPUS' /work/srpms/$srpm
+        timeout $TIMEOUT rpmbuild --rebuild --nocheck $rpmbuild_opts --define '_smp_mflags -j$cpus' /work/srpms/$srpm
         touch /work/rpms/$srpm/.nocheck
       fi
       # the channel never ships debuginfo packages

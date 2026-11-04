@@ -26,6 +26,26 @@ them, recorded as `ok-nocheck`. The cmake of the build environment builds out of
 for the cmake of EL7 do not: the builds run in the source tree. The rpm of EL7 cannot generate the build dependencies
 of the pyproject macros: pip is installed for the packages that use them.
 
+```
+# compare the rebuilt packages with the binaries of the channel (rpm only: e.g. a CentOS 7 container)
+compare-rebuilt.sh <upstream/ of build-repo.sh> <output>/rpms <compare dir>
+```
+
+`compare-rebuilt.sh` compares each package of the channel with its rebuild: version, files with their modes and owners,
+requires (without the rpmlib features), provides and scriptlets; `<compare dir>/compare.tsv` says what differs,
+`<compare dir>/diffs/` how. The expected differences:
+
+- packages of XCP-ng whose binaries in the channel were built against OpenSSL 1.0.2 (glusterfs, zfs) link to
+  OpenSSL 3 now, as their current builds do: the channel has both;
+- newer symbol versions of OpenSSL, nss, p11-kit and dbus in the requires (libcurl, python, trousers, nss-pem, gnutls,
+  avahi): the channel has those versions;
+- psmisc links to ncurses 5 of the buildroot instead of 6: the channel has both;
+- kbd has keymaps of the newer xkeyboard-config of CentOS 7.9; python3-setuptools takes the date of its build in its
+  version tag; the EPEL macros add python3 provides to python36-bitarray; the perl dependency generator no longer
+  makes perl require the `perl(ExtUtils::Constant)` it provides.
+
+The builds run as root: an install that makes a file setuid only as root (glusterfs) is undone in the script.
+
 The packages of LINBIT for XOSTOR (`linstor-*`, `drbd-reactor`) have no published SRPM: they stay binaries.
 
 Next steps: build against the rebuilt packages instead of the upstream repositories (a build root of its own), then
