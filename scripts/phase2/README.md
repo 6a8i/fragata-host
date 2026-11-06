@@ -23,7 +23,7 @@ same archives, with their own release tag. The packages that need something else
 autoconf or cmocka, no g++) say so in the script. A build that
 hangs stops after `TIMEOUT` seconds; one whose tests fail or hang in the container (`%check`) is built again without
 them, recorded as `ok-nocheck`. The cmake of the build environment builds out of the source tree, the specs written
-for the cmake of EL7 do not: the builds run in the source tree. The rpm of EL7 cannot generate the build dependencies
+for the cmake of EL7 do not: those that use none of the out-of-source macros build in the source tree. The rpm of EL7 cannot generate the build dependencies
 of the pyproject macros: pip is installed for the packages that use them.
 
 ```
@@ -64,7 +64,17 @@ BUILD_ENV=fragata BUILDROOT_RPMS=<output>/rpms rebuild-srpms.sh all-sources.tsv 
 
 The image and the builds use no XCP-ng repository: the rebuilt packages first (a repository made in `<output>/rpms`),
 then CentOS 7.5 (the base of XCP-ng 8.3, which the packages of the channel match), CentOS 7.9 and EPEL 7 for what
-they lack. The packages of CentOS and EPEL still build in a clean CentOS 7.9. The release package of the buildroot
+they lack; the libglvnd of CentOS 7.9 stays excluded, as the mesa of CentOS 7.5 conflicts with it. The packages
+of CentOS and EPEL still build in a clean CentOS 7.9. The build tools are the packages that XCP-ng builds itself
+(its release tag, or a version that CentOS 7.5, 7.9 and EPEL 7 do not have: golang, devtoolset-10) and that the
+channel does not ship; some at an older version that packages need (`build-tools.txt` gives it): cmocka 1.1.2 for
+samba, the EPEL macros 7-19, which name the python3 packages `python3-*` as the channel does (7-38 names them
+`python36-*`). The gdb of devtoolset-10 comes from the CentOS 7.9 SCLo archive, as in XCP-ng; the other
+devtoolset-10 packages build in CentOS 7.9 with the devtoolset-10 build macros of the first build, and its gcc (and
+dyninst) with 2 jobs, as more crash the compiler for lack of memory. Compared with the builds of the XCP-ng
+build environment, every package is the same but for the expected differences (random test file names of
+openssl-test-results, the date tag of python3-setuptools) and the debuginfo packages, which the channel does not
+ship. The release package of the buildroot
 gives the same dist tag (`.xcpng8.3`), so the rebuilt packages replace the binaries of the channel version for
 version; the builds of the XCP-ng build environment could take newer packages of its testing repositories, these
 take exactly those of the channel.

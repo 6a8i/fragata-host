@@ -18,7 +18,9 @@ def key(version):
     return [(int(e), e) if e.isdigit() else (-1, e) for v in version for e in re.findall(r'\d+|[a-zA-Z]+', v)]
 
 
-names = [line.strip() for line in open(sys.argv[1]) if line.strip() and not line.startswith('#')]
+# a name, or a name and the version-release to take instead of the newest (an older build tool some package needs)
+entries = [line.split() for line in open(sys.argv[1]) if line.strip() and not line.startswith('#')]
+names = {e[0] for e in entries}
 best = {}
 for repo in REPOS:
     for p in primary(repo):
@@ -27,15 +29,19 @@ for repo in REPOS:
             continue
         v = p.find('c:version', NS)
         version = (v.get('epoch') or '0', v.get('ver'), v.get('rel'))
+        found = (version, repo, p.find('c:location', NS).get('href'), p.find('c:size', NS).get('package'),
+                 p.find('c:checksum', NS).text)
         if name not in best or key(version) > key(best[name][0]):
-            best[name] = (version, repo, p.find('c:location', NS).get('href'), p.find('c:size', NS).get('package'),
-                          p.find('c:checksum', NS).text)
+            best[name] = found
+        best[(name, version[1] + '-' + version[2])] = found
 # LF lines on every platform (rebuild-srpms.sh reads them with sh)
 with open(sys.argv[2], 'w', newline='\n') as f:
-    for name in names:
-        if name not in best:
-            print('not found: ' + name)
+    for entry in entries:
+        name = entry[0]
+        want = name if len(entry) == 1 else (name, entry[1])
+        if want not in best:
+            print('not found: ' + ' '.join(entry))
             continue
-        version, repo, location, size, sha = best[name]
+        version, repo, location, size, sha = best[want]
         f.write('%s\t%s\t%s\t%s\t%s\n' % (name, repo, location, size, sha))
         print('%s %s-%s' % (name, version[1], version[2]))

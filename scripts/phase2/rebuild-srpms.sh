@@ -73,15 +73,25 @@ baseurl=https://archives.fedoraproject.org/pub/archive/epel/7/$basearch/
 gpgcheck=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-7
 priority=60
+
+[fragata-buildroot-sclo-rh]
+name=CentOS 7.9 SCLo rh (build dependencies)
+baseurl=https://archive.kernel.org/centos-vault/7.9.2009/sclo/$basearch/rh/
+# the gdb of the devtoolset-10 of XCP-ng (the builds of CentOS SCLo), for its gcc
+includepkgs=devtoolset-10-gdb*
+gpgcheck=1
+gpgkey=https://www.centos.org/keys/RPM-GPG-KEY-CentOS-SIG-SCLo
+priority=60
 EOF
 
 # builds $srpm in a buildroot (centos, xcpng), its output appended to its log
 build_in() {
   # the release tag the package of CentOS 7 or EPEL 7 was built with (el7, el7_9, el7.centos)
   dist=$(echo "$srpm" | grep -oE '\.el7(_[0-9]+)?(\.centos)?' | head -1)
-  # the C++ of dyninst takes more memory per job than a build has: its compilers crash with 8 jobs
+  # the C++ of dyninst and the profiled bootstrap of the gcc of devtoolset-10 take more memory per job than a build
+  # has: their compilers crash with 8 jobs
   cpus=$BUILD_CPUS
-  case $srpm in dyninst-*) [ "$cpus" -le 2 ] || cpus=2 ;; esac
+  case $srpm in dyninst-*|devtoolset-10-gcc-*) [ "$cpus" -le 2 ] || cpus=2 ;; esac
   case $1 in
     centos)
       image=quay.io/centos/centos:centos7
@@ -97,6 +107,19 @@ build_in() {
         if rpm -qp --qf '%{vendor}' /work/srpms/$srpm | grep -q Fedora; then
           yum install -y epel-rpm-macros python3-rpm-macros
         fi
+        # the packages of devtoolset-10 (CentOS SCLo) build with the macros of their collection (devtoolset-10-build,
+        # built before them in this output: without it their names lack the prefix of the collection), the gcc with
+        # the binutils of its collection and its 32-bit libraries too (the glibc of i686, which CentOS has)
+        case $srpm in
+          devtoolset-10-[0-9]*) ;;
+          devtoolset-10-*) yum install -y /work/rpms/devtoolset-10-[0-9]*.src.rpm/devtoolset-10-build-*.rpm \
+            /work/rpms/devtoolset-10-[0-9]*.src.rpm/devtoolset-10-runtime-*.rpm
+            case $srpm in devtoolset-10-gcc-*)
+              # yum-builddep does not resolve its file requirements (/lib/libc.so.6, /usr/lib/libc.so)
+              yum install -y /work/rpms/devtoolset-10-binutils-*.src.rpm/devtoolset-10-binutils-[0-9]*.rpm \
+                glibc.i686 glibc-devel.i686 ;;
+            esac ;;
+        esac
         yum-builddep -y /work/srpms/$srpm"
       cache=yumcache-centos
       mounts=
@@ -128,9 +151,10 @@ build_in() {
         # the autoconf of its configure (2.69), gtkdocize, and no C++ library (built when g++ is there)
         gnutls-*) builddep_opts=--setopt=$tools.exclude=autoconf
           fixes='sudo yum install -y gtk-doc && sudo rpm -e --nodeps gcc-c++' ;;
-        # a cmocka older than 1.1.3: samba builds and ships its own
+        # a cmocka older than 1.1.3 (a build tool of the buildroot of Fragata Host): samba builds and ships its own
         samba-*) builddep_opts=
-          fixes="sudo yum downgrade -y --disablerepo=$tools libcmocka-1.1.2-1.el7 libcmocka-devel-1.1.2-1.el7" ;;
+          if [ "$BUILD_ENV" = fragata ]; then repo_opts=; else repo_opts=--disablerepo=$tools; fi
+          fixes="sudo yum downgrade -y $repo_opts libcmocka-1.1.2-1.el7 libcmocka-devel-1.1.2-1.el7" ;;
         # the packages of CentOS regenerate their configure with the autoconf of CentOS 7 (2.69)
         *.el7*) builddep_opts=--setopt=$tools.exclude=autoconf ;;
         *) builddep_opts= ;;
@@ -149,13 +173,15 @@ build_in() {
           sudo yum install -y python3-pip
         fi
         # build dependencies may set up their tools in profile.d (the OCaml toolchain of xs-opam-repo)
-        for profile in /etc/profile.d/*.sh; do . \$profile; done"
-      # the cmake macros of the build environment build out of the source tree, the specs written for the cmake of
-      # EL7 run make in it
-      rpmbuild_opts="--define '__cmake_in_source_build 1'"
-      # the spec of cmocka (for the cmake of the build environment) builds out of the source tree, as cmocka requires
-      case $srpm in cmocka-*) rpmbuild_opts= ;; esac
-      [ -z "$dist" ] || rpmbuild_opts="$rpmbuild_opts --define 'dist $dist'"
+        for profile in /etc/profile.d/*.sh; do . \$profile; done
+        # the cmake macros of the build environment build out of the source tree; the specs written for the cmake
+        # of EL7 run make in it: those that use none of the out-of-source macros build in the source tree
+        if ! rpm2cpio /work/srpms/$srpm | cpio -i --quiet --to-stdout '*.spec' |
+            grep -qE '_vpath_builddir|%\\{?cmake3?_(build|install)|__cmake3?_builddir'; then
+          echo '%__cmake_in_source_build 1' >>~/.rpmmacros
+        fi"
+      rpmbuild_opts=
+      [ -z "$dist" ] || rpmbuild_opts="--define 'dist $dist'"
       # the install of glusterfs makes fusermount-glusterfs setuid root when it runs as root, as the builds here do;
       # the upstream package, built as a user, is not
       case $srpm in

@@ -15,8 +15,8 @@ IMAGE=${2:-fragata-build-env:8.3}
 ENGINE=${ENGINE:-podman}
 
 grep -v '^#' "$here/buildroot-packages.txt" >"$OUT_DIR/buildroot-packages.txt"
-# the repositories of the buildroot: the rebuilt packages above CentOS and EPEL (yum priorities); the exclusions of
-# buildroot.repo are for the XCP-ng build environment, whose packages are older
+# the repositories of the buildroot: the rebuilt packages above CentOS and EPEL (yum priorities); the libglvnd of
+# CentOS 7.9 stays excluded, it conflicts with the mesa of CentOS 7.5
 {
   printf '[fragata]\nname=Fragata Host (rebuilt packages)\nbaseurl=file:///buildroot/\ngpgcheck=0\npriority=10\n'
   # a local repository, updated by the builds: read again by each
@@ -28,7 +28,7 @@ grep -v '^#' "$here/buildroot-packages.txt" >"$OUT_DIR/buildroot-packages.txt"
     printf 'baseurl=https://archive.kernel.org/centos-vault/7.5.1804/%s/$basearch/\n' $repo
     printf 'gpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7\npriority=40\n\n'
   done
-  sed '/^exclude=/d; /^# its libglvnd/d' "$OUT_DIR/buildroot.repo"
+  cat "$OUT_DIR/buildroot.repo"
 } >"$OUT_DIR/buildroot-fragata.repo"
 
 MSYS_NO_PATHCONV=1 "$ENGINE" run --rm -v "$OUT:/work" -v "$OUT/rpms:/buildroot" -v "$OUT/yumcache-centos:/var/cache/yum" \
