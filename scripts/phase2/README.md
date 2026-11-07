@@ -79,4 +79,5 @@ gives the same dist tag (`.xcpng8.3`), so the rebuilt packages replace the binar
 version; the builds of the XCP-ng build environment could take newer packages of its testing repositories, these
 take exactly those of the channel.
 
-Next step: let `build-repo.sh` take the rebuilt binaries as Fragata packages.
+`../packages/build-repo.sh` ships them: given a directory with every rebuilt package (`<second output>/rpms/*/*.rpm`
+in one place), a selected package whose file is there replaces the upstream binary.

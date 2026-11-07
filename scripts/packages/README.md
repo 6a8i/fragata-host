@@ -29,7 +29,15 @@ the metadata describe) and `own.txt` (the Fragata packages).
   SMAPIv3, GlusterFS, tools), at their latest version in XCP-ng base, updates and LINSTOR, with the closure of their
   dependencies, checked (checksum and XCP-ng signature) before being signed by the Fragata Host key.
 
-Phase 2 rebuilds these packages from their sources (`../phase2`).
+## Content (phase 2)
+
+Phase 2 rebuilds the packages from their sources (`../phase2`), in a buildroot of its own. `build-repo.sh` takes a
+directory of the rebuilt packages: a selected package whose file is there is shipped from there, at the same
+version, instead of the binary of XCP-ng; `rebuilt.txt` next to the metadata lists them. The packages that do not
+build yet stay the upstream binaries: `compat-libstdc++-33` and `python2-xapi-storage` (required by
+`xcp-ng-deps`), `python2-psutil` (SMAPIv3), `drbd*` and `kmod-drbd` (XOSTOR, with the packages of LINBIT that
+have no sources). The rebuilt packages come from a build run by hand (the workflow of the updates channel has
+none: the packages XCP-ng publishes after a build are shipped as binaries until the next one).
 
 ## Updates
 
@@ -46,10 +54,11 @@ makes it the `8.3` channel.
 select-packages.py base-packages.txt selection.tsv extras.txt
 # 2. own packages
 build-rpm.sh <package repository> own/
-# 3. repository: download, check, sign (in the XCP-ng 8.3 build environment); only new packages are signed
+# 3. repository: download, check, sign (in the XCP-ng 8.3 build environment); only new packages are signed;
+#    the rebuilt packages (../phase2, all of them in one directory) replace the upstream binaries
 podman run --rm -v $PWD:/scripts:ro -v <build dir>:/build -v <key dir>:/keys:ro \
   ghcr.io/xcp-ng/xcp-ng-build-env:8.3 sh /scripts/build-repo.sh /build/selection.tsv /build/own /keys \
-  /build/repo-8.3 https://github.com/6a8i/fragata-host-updates/releases/download/packages-8.3/
+  /build/repo-8.3 https://github.com/6a8i/fragata-host-updates/releases/download/packages-8.3/ [/build/rebuilt]
 # 4. publish in the testing channel, test on a host, promote
 publish-repo.sh <build dir>/repo-8.3 6a8i/fragata-host-updates 8.3 testing
 promote-channel.sh 6a8i/fragata-host-updates 8.3

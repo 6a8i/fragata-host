@@ -3,11 +3,15 @@
 # - downloads the selected upstream packages (select-packages.py), checking their checksum and their
 #   upstream signature;
 # - replaces the release packages of XCP-ng by the Fragata ones;
+# - takes the packages rebuilt from their sources (phase 2) instead of the upstream binaries of the same name;
 # - signs every package and the repository metadata with the Fragata Host key.
 #
 # usage (in the container): build-repo.sh <selection TSV> <Fragata RPMs dir> <key dir> <output dir> <packages URL>
+#                                         [<rebuilt RPMs dir>]
 #   key dir: RPM-GPG-KEY-fragata, fragata-signing.secret.asc, passphrase.txt
 #   packages URL: where the packages are downloaded from (the metadata point there)
+#   rebuilt RPMs dir: the packages of ../phase2/rebuild-srpms.sh in one directory; a selected package whose file
+#     is there is taken from there, the others (those that do not build yet, LINBIT) are the upstream binaries
 # output: <output>/upstream (downloads), <output>/packages/*.rpm (signed), <output>/repo/repodata (repomd.xml signed in repomd.xml.asc)
 set -eu
 SELECTION=$1
@@ -15,6 +19,7 @@ OWN=$2
 KEYS=$3
 OUT=$4
 PACKAGES_URL=$5
+REBUILT=${6:-}
 UPSTREAM=https://updates.xcp-ng.org/8/8.3
 
 yum -q -y install rpm-sign createrepo expect >/dev/null
@@ -34,9 +39,12 @@ OWN_NAMES=$(for f in "$OWN"/*.rpm; do
   rpm -qp --obsoletes "$f" 2>/dev/null | awk '{print $1}'
 done | sort -u)
 is_own() { printf '%s\n' "$OWN_NAMES" | grep -qxF "$1"; }
+# a selected package is taken from its rebuild when there is one, else from upstream
+is_rebuilt() { [ -n "$REBUILT" ] && [ -f "$REBUILT/$(basename "$1")" ]; }
 while IFS="$(printf '\t')" read -r name repo location size sha; do
   case $name in xcp-ng-release | xcp-ng-release-*) continue ;; esac
   is_own "$name" && continue
+  is_rebuilt "$location" && continue
   file="$OUT/upstream/$(basename "$location")"
   if [ ! -f "$file" ] || ! echo "$sha  $file" | sha256sum -c --status; then
     # repository: its URL, or (older selections) its name in the XCP-ng updates server
@@ -50,13 +58,19 @@ while IFS="$(printf '\t')" read -r name repo location size sha; do
   fi
 done <"$SELECTION"
 
-# packages of the repository: the upstream downloads (kept unsigned, a later run only downloads what changed) and
-# the Fragata packages
+# packages of the repository: the rebuilt packages, the upstream downloads (kept unsigned, a later run only
+# downloads what changed) and the Fragata packages
 SOURCES="$OUT/sources.txt"
+: >"$OUT/rebuilt.new.txt"
 cut -f1,3 "$SELECTION" | while IFS="$(printf '\t')" read -r name location; do
   case $name in xcp-ng-release | xcp-ng-release-*) continue ;; esac
   is_own "$name" && continue
-  echo "$OUT/upstream/$(basename "$location")"
+  if is_rebuilt "$location"; then
+    echo "$REBUILT/$(basename "$location")"
+    basename "$location" >>"$OUT/rebuilt.new.txt"
+  else
+    echo "$OUT/upstream/$(basename "$location")"
+  fi
 done >"$SOURCES"
 ls "$OWN"/*.x86_64.rpm "$OWN"/*.noarch.rpm 2>/dev/null >>"$SOURCES" || true
 
@@ -99,6 +113,8 @@ cp "$SELECTION" "$OUT/selection.tsv"
 for f in "$OWN"/*.x86_64.rpm "$OWN"/*.noarch.rpm; do
   [ ! -f "$f" ] || basename "$f" | sed -e 's/[^A-Za-z0-9._-]/./g' -e 's/\.\.*/./g'
 done >"$OUT/own.txt"
+# the packages taken from their rebuild, not from upstream
+mv "$OUT/rebuilt.new.txt" "$OUT/rebuilt.txt"
 
 # metadata: the packages are downloaded from PACKAGES_URL
 rm -rf "$OUT/repo/repodata"
@@ -107,4 +123,4 @@ gpg2 --batch -q --yes --passphrase-file "$KEYS/passphrase.txt" -u "$FPR" --armor
 cp "$KEYS/RPM-GPG-KEY-fragata" "$OUT/repo/"
 rm -rf "$GNUPGHOME"
 
-echo "$(ls "$OUT"/packages/*.rpm | wc -l) packages, $(du -sh "$OUT/packages" | cut -f1)"
+echo "$(ls "$OUT"/packages/*.rpm | wc -l) packages, $(wc -l <"$OUT/rebuilt.txt") rebuilt from their sources, $(du -sh "$OUT/packages" | cut -f1)"
