@@ -1,10 +1,10 @@
 #!/bin/sh
 # Promotes the testing channel of a version to its stable channel: the metadata of <version>-testing (and the
-# selection and manifest it was made from) become those of <version>. The packages are shared by the two channels
-# (release packages-<version>), only the metadata are copied.
+# selection and manifest it was made from) become those of <version>. The packages stay in the release of their
+# build (release.txt), only the metadata are copied; the releases no channel uses any more are then deleted.
 #
 # usage: promote-channel.sh <owner/repository> <version, e.g. 8.3>
-# needs: git; GH_TOKEN, when set, authenticates the push of gh-pages (CI)
+# needs: git, gh (authenticated); GH_TOKEN, when set, authenticates the push of gh-pages (CI)
 set -eu
 REPO=$1
 VERSION=$2
@@ -21,11 +21,13 @@ fi
 mkdir -p "$VERSION/x86_64"
 rm -rf "$VERSION/x86_64/repodata"
 cp -r "$VERSION-testing/x86_64/repodata" "$VERSION/x86_64/"
-for state in selection.tsv signed.tsv own.txt; do
+for state in release.txt selection.tsv signed.tsv own.txt rebuilt.txt; do
+  rm -f "$VERSION/$state"
   [ ! -f "$VERSION-testing/$state" ] || cp "$VERSION-testing/$state" "$VERSION/"
 done
 git add -A
 git -c user.name="Fragata Host" -c user.email="fragata-host@users.noreply.github.com" \
   commit -q -m "Promote $VERSION-testing to $VERSION"
 git push -q origin gh-pages
+sh "$(dirname "$0")/prune-releases.sh" "$REPO" "$VERSION" "$PWD"
 echo "promoted: https://$(echo "$REPO" | cut -d/ -f1).github.io/$(echo "$REPO" | cut -d/ -f2)/$VERSION/x86_64/"

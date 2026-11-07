@@ -1,7 +1,8 @@
 #!/bin/sh
 # Publishes the Fragata Host package repository made by build-repo.sh on GitHub:
-# - the packages as assets of the release `packages-<version>` of the updates repository (only the new ones are
-#   uploaded), shared by the channels of the version: a package keeps its name, a new version has a new name;
+# - the packages as assets of the release of this build, `packages-<version>-<build>` (release.txt of the build,
+#   the metadata point there; a release holds at most 1000 files on GitHub, so each build has its own), then the
+#   releases no channel uses any more are deleted (prune-releases.sh);
 # - the metadata, the selection and the manifest of the signed packages (what the next update starts from) and the
 #   public key on its `gh-pages` branch, served by GitHub Pages under <channel>/x86_64/.
 #
@@ -13,11 +14,12 @@ SRC=$(cd "$1" && pwd)
 REPO=$2
 VERSION=$3
 CHANNEL=$VERSION${4:+-$4}
-TAG=packages-$VERSION
+TAG=$(cat "$SRC/release.txt")
 REMOTE=https://${GH_TOKEN:+x-access-token:$GH_TOKEN@}github.com/$REPO.git
+case $TAG in packages-$VERSION-?*) ;; *) echo "the build is for the release $TAG, not packages-$VERSION-<build>" >&2; exit 1 ;; esac
 
 gh release view "$TAG" -R "$REPO" >/dev/null 2>&1 ||
-  gh release create "$TAG" -R "$REPO" --title "Fragata Host $VERSION packages" \
+  gh release create "$TAG" -R "$REPO" --title "Fragata Host $VERSION packages, build ${TAG#packages-$VERSION-}" \
     --notes "Signed packages of the Fragata Host $VERSION repositories. Use the repositories, not these files directly."
 
 # assets: "<name> sha256:<digest>"
@@ -27,8 +29,13 @@ existing=$(assets)
 new=0
 for file in "$SRC"/packages/*.rpm; do
   name=$(basename "$file")
-  # a package rebuilt or signed again keeps its name: its asset is replaced
   if ! printf '%s\n' "$existing" | grep -qxF "$name sha256:$(sha256sum "$file" | cut -d' ' -f1)"; then
+    # a published file keeps its content: another one would break a channel whose metadata describe the published
+    # one (REPLACE_ASSETS=1 to replace it anyway, e.g. to put a published file back)
+    if printf '%s\n' "$existing" | grep -q "^$name " && [ "${REPLACE_ASSETS:-}" != 1 ]; then
+      echo "$name is published with another content: a published file keeps its content" >&2
+      exit 1
+    fi
     gh release upload --clobber "$TAG" -R "$REPO" "$file"
     new=$((new + 1))
   fi
@@ -52,7 +59,8 @@ fi
 mkdir -p "$WORK/site/$CHANNEL/x86_64"
 rm -rf "$WORK/site/$CHANNEL/x86_64/repodata"
 cp -r "$SRC/repo/repodata" "$WORK/site/$CHANNEL/x86_64/"
-for state in selection.tsv signed.tsv own.txt; do
+for state in release.txt selection.tsv signed.tsv own.txt rebuilt.txt; do
+  rm -f "$WORK/site/$CHANNEL/$state"
   [ ! -f "$SRC/$state" ] || cp "$SRC/$state" "$WORK/site/$CHANNEL/"
 done
 cp "$SRC/repo/RPM-GPG-KEY-fragata" "$WORK/site/"
@@ -69,6 +77,8 @@ git -C "$WORK/site" add -A
 git -C "$WORK/site" -c user.name="Fragata Host" -c user.email="fragata-host@users.noreply.github.com" \
   commit -q -m "Repository metadata of $CHANNEL" || echo "metadata unchanged"
 git -C "$WORK/site" push -q origin gh-pages
+# the releases of the builds the channels no longer use
+sh "$(dirname "$0")/prune-releases.sh" "$REPO" "$VERSION" "$WORK/site"
 
 gh api "repos/$REPO/pages" >/dev/null 2>&1 ||
   gh api -X POST "repos/$REPO/pages" -f "source[branch]=gh-pages" -f "source[path]=/" >/dev/null 2>&1 ||

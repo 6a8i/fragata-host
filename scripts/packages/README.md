@@ -4,7 +4,8 @@ The hosts only use the Fragata Host repository (`/etc/yum.repos.d/fragata.repo`,
 package), served by GitHub:
 
 - metadata and public key on GitHub Pages: `https://6a8i.github.io/fragata-host-updates/8.3/x86_64/`;
-- packages as assets of the release `packages-8.3` of `6a8i/fragata-host-updates` (the metadata point there).
+- packages as assets of a release of `6a8i/fragata-host-updates`, one per build of a channel
+  (`packages-8.3-<build>`; the metadata point there, `release.txt` names it).
 
 Every package and the metadata (`repomd.xml.asc`) are signed by the Fragata Host key; the hosts only trust that
 key (`RPM-GPG-KEY-fragata`).
@@ -14,8 +15,11 @@ key (`RPM-GPG-KEY-fragata`).
 - `8.3` (repository `fragata` of the hosts): the stable channel;
 - `8.3-testing` (repository `fragata-testing`, disabled on the hosts): the updates waiting for a test.
 
-Both use the packages of the release `packages-8.3`: a package keeps its name, a new version has a new name, so
-only the metadata differ. Next to the metadata of a channel are the state it was made from: `selection.tsv` (the
+Each build of a channel publishes its packages in a release of its own (GitHub holds at most 1000 files in a
+release), so a promotion only copies metadata; the releases no channel uses any more are deleted
+(`prune-releases.sh`). A published file keeps its content (`publish-repo.sh` refuses to replace one); a package
+rebuilt from its sources has the name and version of the upstream binary, so its file is named apart
+(`.fragata.rpm`). Next to the metadata of a channel are the state it was made from: `selection.tsv` (the
 upstream packages), `signed.tsv` (source checksum → signed package, so a package is signed once and stays the bytes
 the metadata describe) and `own.txt` (the Fragata packages).
 
@@ -33,7 +37,9 @@ the metadata describe) and `own.txt` (the Fragata packages).
 
 Phase 2 rebuilds the packages from their sources (`../phase2`), in a buildroot of its own. `build-repo.sh` takes a
 directory of the rebuilt packages: a selected package whose file is there is shipped from there, at the same
-version, instead of the binary of XCP-ng; `rebuilt.txt` next to the metadata lists them. The packages that do not
+version, instead of the binary of XCP-ng; `rebuilt.txt` next to the metadata lists them. At the same version, yum
+does not update an installed package to its rebuild: the hosts installed before get the rebuilt packages with the
+next version of each, or with `yum reinstall`; the ISO installs them. The packages that do not
 build yet stay the upstream binaries: `compat-libstdc++-33` and `python2-xapi-storage` (required by
 `xcp-ng-deps`), `python2-psutil` (SMAPIv3), `drbd*` and `kmod-drbd` (XOSTOR, with the packages of LINBIT that
 have no sources). The rebuilt packages come from a build run by hand (the workflow of the updates channel has
@@ -58,7 +64,8 @@ build-rpm.sh <package repository> own/
 #    the rebuilt packages (../phase2, all of them in one directory) replace the upstream binaries
 podman run --rm -v $PWD:/scripts:ro -v <build dir>:/build -v <key dir>:/keys:ro \
   ghcr.io/xcp-ng/xcp-ng-build-env:8.3 sh /scripts/build-repo.sh /build/selection.tsv /build/own /keys \
-  /build/repo-8.3 https://github.com/6a8i/fragata-host-updates/releases/download/packages-8.3/ [/build/rebuilt]
+  /build/repo-8.3 https://github.com/6a8i/fragata-host-updates/releases/download/packages-8.3-$(date -u +%Y%m%d%H%M)/ \
+  [/build/rebuilt]
 # 4. publish in the testing channel, test on a host, promote
 publish-repo.sh <build dir>/repo-8.3 6a8i/fragata-host-updates 8.3 testing
 promote-channel.sh 6a8i/fragata-host-updates 8.3
