@@ -15,6 +15,11 @@ used=$(for channel in "$VERSION" "$VERSION-testing"; do
 done | sort -u)
 gh release list -R "$REPO" --json tagName --jq '.[].tagName' | grep -x "packages-$VERSION\(-.*\)\?" | while read -r tag; do
   printf '%s\n' "$used" | grep -qxF "$tag" && continue
+  # its files first: GitHub fails (HTTP 502) to delete a release of hundreds of files at once
+  id=$(gh api "repos/$REPO/releases/tags/$tag" --jq .id)
+  gh api --paginate "repos/$REPO/releases/$id/assets?per_page=100" --jq '.[].id' | while read -r asset; do
+    gh api -X DELETE "repos/$REPO/releases/assets/$asset" >/dev/null
+  done
   gh release delete "$tag" -R "$REPO" --cleanup-tag --yes
   echo "deleted the release $tag"
 done
