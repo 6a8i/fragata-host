@@ -52,6 +52,7 @@ echo "$new packages uploaded"
 # the metadata describe every package of the release: those published before (by a run given only the new
 # packages, e.g. CI) are downloaded for them
 URL=https://github.com/$REPO/releases/download/$TAG/
+mkdir "$WORK/repo"
 mkdir "$WORK/published"
 printf '%s\n' "$existing" | while read -r name; do
   [ -n "$name" ] && [ ! -e "$WORK/packages/$name" ] || continue
