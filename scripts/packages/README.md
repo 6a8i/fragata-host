@@ -39,11 +39,12 @@ Phase 2 rebuilds the packages from their sources (`../phase2`), in a buildroot o
 directory of the rebuilt packages: a selected package whose file is there is shipped from there, at the same
 version, instead of the binary of XCP-ng; `rebuilt.txt` next to the metadata lists them. At the same version, yum
 does not update an installed package to its rebuild: the hosts installed before get the rebuilt packages with the
-next version of each, or with `yum reinstall`; the ISO installs them. The packages that do not
-build yet stay the upstream binaries: `compat-libstdc++-33` and `python2-xapi-storage` (required by
-`xcp-ng-deps`), `python2-psutil` (SMAPIv3), `drbd*` and `kmod-drbd` (XOSTOR, with the packages of LINBIT that
-have no sources). The rebuilt packages come from a build run by hand (the workflow of the updates channel has
-none: the packages XCP-ng publishes after a build are shipped as binaries until the next one).
+next version of each, or with `yum reinstall`; the ISO installs them. The packages that do not build yet stay the
+upstream binaries: `kmod-drbd` (XOSTOR: its compatibility patches need a coccinelle newer than the one of EPEL 7),
+with the packages of LINBIT that have no sources (`linstor-*`, `drbd-reactor`). `python2-xapi-storage`, whose
+xapi no longer builds, is a Fragata package built from its sources (`../phase2/build-python2-xapi-storage.sh`).
+The workflow of the updates channel rebuilds the packages XCP-ng changes (`../phase2/README.md`); a build by hand
+gives it every rebuilt package in one directory.
 
 ## Updates
 

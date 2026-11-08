@@ -12,7 +12,9 @@
 #   packages URL: where the packages are downloaded from (the metadata point there): the download URL of the
 #     release of this build, packages-<version>-<build> (publish-repo.sh makes it, release.txt names it)
 #   rebuilt RPMs dir: the packages of ../phase2/rebuild-srpms.sh in one directory; a selected package whose file
-#     is there is taken from there, the others (those that do not build yet, LINBIT) are the upstream binaries
+#     is there is taken from there; one already published from its rebuild (<output>/packages/<name>.fragata.rpm,
+#     the published packages of the channel) stays so; the others (those that do not build yet, LINBIT) are the
+#     upstream binaries
 # output: <output>/upstream (downloads), <output>/packages/*.rpm (signed), <output>/repo/repodata (repomd.xml signed in repomd.xml.asc)
 set -eu
 SELECTION=$1
@@ -40,12 +42,19 @@ OWN_NAMES=$(for f in "$OWN"/*.rpm; do
   rpm -qp --obsoletes "$f" 2>/dev/null | awk '{print $1}'
 done | sort -u)
 is_own() { printf '%s\n' "$OWN_NAMES" | grep -qxF "$1"; }
-# a selected package is taken from its rebuild when there is one, else from upstream
+# GitHub renames the other characters of release asset names (e.g. + ~) to '.' and merges repeated dots: the
+# files take those names already, the metadata point at them (yum does not use the file name)
+safe_name() { basename "$1" | sed -e 's/[^A-Za-z0-9._-]/./g' -e 's/\.\.*/./g'; }
+# a selected package is taken from its rebuild when there is one (a new one, or the one published in the channel,
+# whose file is named apart: see below), else from upstream
 is_rebuilt() { [ -n "$REBUILT" ] && [ -f "$REBUILT/$(basename "$1")" ]; }
+published_rebuilt() { echo "$OUT/packages/$(safe_name "$1" | sed 's/\.rpm$/.fragata.rpm/')"; }
+is_published_rebuilt() { [ -f "$(published_rebuilt "$1")" ]; }
 while IFS="$(printf '\t')" read -r name repo location size sha; do
   case $name in xcp-ng-release | xcp-ng-release-*) continue ;; esac
   is_own "$name" && continue
   is_rebuilt "$location" && continue
+  is_published_rebuilt "$location" && continue
   file="$OUT/upstream/$(basename "$location")"
   if [ ! -f "$file" ] || ! echo "$sha  $file" | sha256sum -c --status; then
     # repository: its URL, or (older selections) its name in the XCP-ng updates server
@@ -65,7 +74,9 @@ SOURCES="$OUT/sources.txt"
 cut -f1,3 "$SELECTION" | while IFS="$(printf '\t')" read -r name location; do
   case $name in xcp-ng-release | xcp-ng-release-*) continue ;; esac
   is_own "$name" && continue
-  if is_rebuilt "$location"; then echo "$REBUILT/$(basename "$location")"; else echo "$OUT/upstream/$(basename "$location")"; fi
+  if is_rebuilt "$location"; then echo "$REBUILT/$(basename "$location")"
+  elif is_published_rebuilt "$location"; then published_rebuilt "$location"
+  else echo "$OUT/upstream/$(basename "$location")"; fi
 done >"$SOURCES"
 ls "$OWN"/*.x86_64.rpm "$OWN"/*.noarch.rpm 2>/dev/null >>"$SOURCES" || true
 
@@ -81,15 +92,13 @@ rm -rf "$NEW" "$TOSIGN" && mkdir -p "$NEW" "$TOSIGN"
 : >"$OUT/rebuilt.new.txt"
 while read -r src; do
   sha=$(sha256sum "$src" | cut -d' ' -f1)
-  # GitHub renames the other characters of release asset names (e.g. + ~) to '.' and merges repeated dots: the
-  # files take those names already, the metadata point at them (yum does not use the file name)
-  safe=$(basename "$src" | sed -e 's/[^A-Za-z0-9._-]/./g' -e 's/\.\.*/./g')
+  safe=$(safe_name "$src")
   # the channels share the published files by name, so a name must keep its content: a rebuilt package has the
-  # name and version of the upstream binary, its file is named apart
+  # name and version of the upstream binary, its file is named apart (and keeps that name once published)
   if [ -n "$REBUILT" ] && [ "$src" = "$REBUILT/$(basename "$src")" ]; then
     safe=${safe%.rpm}.fragata.rpm
-    echo "$safe" >>"$OUT/rebuilt.new.txt"
   fi
+  case $safe in *.fragata.rpm) echo "$safe" >>"$OUT/rebuilt.new.txt" ;; esac
   if grep -qxF "$(printf '%s\t%s' "$sha" "$safe")" "$MANIFEST" && [ -f "$OUT/packages/$safe" ]; then
     mv "$OUT/packages/$safe" "$NEW/"
   elif rpm -Kv "$src" 2>/dev/null | grep -q "key ID $(echo "$FPR" | tail -c 9 | tr 'A-F' 'a-f'): OK"; then
@@ -113,7 +122,7 @@ mv "$OUT/signed.new.tsv" "$MANIFEST"
 # against the selection and takes the Fragata packages back from the channel
 cp "$SELECTION" "$OUT/selection.tsv"
 for f in "$OWN"/*.x86_64.rpm "$OWN"/*.noarch.rpm; do
-  [ ! -f "$f" ] || basename "$f" | sed -e 's/[^A-Za-z0-9._-]/./g' -e 's/\.\.*/./g'
+  [ ! -f "$f" ] || safe_name "$f"
 done >"$OUT/own.txt"
 # the packages taken from their rebuild, not from upstream (their file names)
 mv "$OUT/rebuilt.new.txt" "$OUT/rebuilt.txt"

@@ -46,7 +46,12 @@ requires (without the rpmlib features), provides and scriptlets; `<compare dir>/
 
 The builds run as root: an install that makes a file setuid only as root (glusterfs) is undone in the script.
 
-The packages of LINBIT for XOSTOR (`linstor-*`, `drbd-reactor`) have no published SRPM: they stay binaries.
+The packages of LINBIT for XOSTOR (`linstor-*`, `drbd-reactor`) have no published SRPM: they stay binaries. So
+does `kmod-drbd`: the compatibility patches of DRBD 9.2 for the kernel of the host are written by coccinelle, and
+the one of EPEL 7 (1.0.7) writes them wrong (hunks that do not apply); XCP-ng publishes no newer one. The other
+packages whose buildroot differs from the one they were built in say so in the script: compat-gcc-32 builds with
+the bison of RHEL 7.0 (its parser uses a macro bison 3 dropped), drbd with the manual pages of its tarball (as
+LINBIT built it), python-psutil with the python3 of the buildroot (its SRPM names the python3 of EPEL of its time).
 
 ## The buildroot of Fragata Host
 
@@ -81,3 +86,30 @@ take exactly those of the channel.
 
 `../packages/build-repo.sh` ships them: given a directory with every rebuilt package (`<second output>/rpms/*/*.rpm`
 in one place), a selected package whose file is there replaces the upstream binary.
+
+## The buildroot repository and the builds in CI
+
+```
+# the rebuilt packages the channel does not ship (development packages, build tools, other subpackages), published
+# for the builds in CI: release buildroot-<version> and metadata under buildroot-<version>/x86_64/ of gh-pages
+publish-buildroot.sh <flat dir of every rebuilt package> <rebuilt.txt of the channel> <owner/repository> <version>
+```
+
+The workflow "Update the testing channel" of 6a8i/fragata-host-updates rebuilds the packages XCP-ng changed: it
+makes the buildroot image from the published repositories (`BUILDROOT_URLS` of `make-buildroot.sh`: the channel
+and its buildroot repository, instead of a local `rpms` directory, so `rebuild-srpms.sh` needs no
+`BUILDROOT_RPMS`), rebuilds the source packages of the changed packages, and `../packages/build-repo.sh` ships
+the rebuilds (the packages already published from their rebuild stay so: their files are named `.fragata.rpm` in
+the release). A package that does not build stays the upstream binary, named in the summary of the run. The other
+rebuilt packages of the run (development packages) go to the buildroot repository with `publish-buildroot.sh`,
+which describes every package of the release in the metadata, the published ones included. The buildroot
+repository is not signed (a repository for builds, read from GitHub over HTTPS).
+
+## python2-xapi-storage
+
+The xapi 24.19.2 of XCP-ng 8.3 no longer builds with the current OCaml libraries of its build environment, and
+xapi 26 no longer ships `python2-xapi-storage`, which `xcp-ng-deps` and the SMAPIv3 plugins of the channel
+require. `build-python2-xapi-storage.sh <xapi-24.19.2 SRPM> <output>` builds it apart
+(`python2-xapi-storage/SPECS`): from the sources of the checked SRPM, the generator of xapi-storage (an OCaml
+program of a few libraries, which still builds) writes the Python API, the same files as the upstream package;
+it is a Fragata package (release `1.10.1`, `own/` of `../packages/build-repo.sh`), so the hosts update to it.

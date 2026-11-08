@@ -5,6 +5,9 @@
 # the CentOS 7.9 and EPEL 7 archives for the others; the builds install their build dependencies the same way
 # (rebuild-srpms.sh with BUILD_ENV=fragata mounts the repository at /buildroot).
 # usage: make-buildroot.sh <output dir of rebuild-srpms.sh> [<image name>]
+#   BUILDROOT_URLS: the published repositories of the rebuilt packages (the channel and the buildroot repository of
+#   publish-buildroot.sh, space separated) instead of <output>/rpms: the image then reads them (CI), and
+#   rebuild-srpms.sh needs no BUILDROOT_RPMS
 # needs podman (or docker), the image quay.io/centos/centos:centos7, <output>/buildroot.repo and
 # <output>/RPM-GPG-KEY-EPEL-7 (written and needed by rebuild-srpms.sh)
 set -eu
@@ -18,9 +21,17 @@ grep -v '^#' "$here/buildroot-packages.txt" >"$OUT_DIR/buildroot-packages.txt"
 # the repositories of the buildroot: the rebuilt packages above CentOS and EPEL (yum priorities); the libglvnd of
 # CentOS 7.9 stays excluded, it conflicts with the mesa of CentOS 7.5
 {
-  printf '[fragata]\nname=Fragata Host (rebuilt packages)\nbaseurl=file:///buildroot/\ngpgcheck=0\npriority=10\n'
-  # a local repository, updated by the builds: read again by each
-  printf 'metadata_expire=0\n\n'
+  if [ -n "${BUILDROOT_URLS:-}" ]; then
+    n=0
+    for url in $BUILDROOT_URLS; do
+      n=$((n + 1))
+      printf '[fragata-%s]\nname=Fragata Host (rebuilt packages, %s)\nbaseurl=%s\ngpgcheck=0\npriority=10\n\n' $n "$url" "$url"
+    done
+  else
+    printf '[fragata]\nname=Fragata Host (rebuilt packages)\nbaseurl=file:///buildroot/\ngpgcheck=0\npriority=10\n'
+    # a local repository, updated by the builds: read again by each
+    printf 'metadata_expire=0\n\n'
+  fi
   # the packages of the channel are those of CentOS 7.5 (the base of XCP-ng 8.3): the other packages of that release
   # match them, CentOS 7.9 only adds those it lacks
   for repo in os updates extras; do
@@ -31,15 +42,16 @@ grep -v '^#' "$here/buildroot-packages.txt" >"$OUT_DIR/buildroot-packages.txt"
   cat "$OUT_DIR/buildroot.repo"
 } >"$OUT_DIR/buildroot-fragata.repo"
 
+mkdir -p "$OUT_DIR/rpms" "$OUT_DIR/yumcache-centos"
 MSYS_NO_PATHCONV=1 "$ENGINE" run --rm -v "$OUT:/work" -v "$OUT/rpms:/buildroot" -v "$OUT/yumcache-centos:/var/cache/yum" \
-  quay.io/centos/centos:centos7 sh -ec '
+  -e BUILDROOT_URLS="${BUILDROOT_URLS:-}" quay.io/centos/centos:centos7 sh -ec '
     rm -f /etc/yum.repos.d/*.repo
     sed "/^exclude=/d" /work/buildroot.repo >/etc/yum.repos.d/buildroot.repo
     cp /work/RPM-GPG-KEY-EPEL-7 /etc/pki/rpm-gpg/
     echo keepcache=1 >>/etc/yum.conf
     yum install -y createrepo yum-plugin-priorities yum-utils
     # the repository of the rebuilt packages
-    createrepo -q --update --workers 4 /buildroot
+    [ -n "$BUILDROOT_URLS" ] || createrepo -q --update --workers 4 /buildroot
     # the image: an empty root, only the repositories of the buildroot (yum reads its configuration as given)
     { printf "[main]\nkeepcache=1\ncachedir=/var/cache/yum/\$basearch/\$releasever\nreposdir=/nonexistent\n";
       printf "plugins=1\ntsflags=nodocs\noverride_install_langs=en_US.utf8\n\n"; cat /work/buildroot-fragata.repo; } \

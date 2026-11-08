@@ -1,0 +1,44 @@
+# The buildroot below the Fragata Host packages: the archives of CentOS 7.9 and EPEL 7, for the build dependencies
+# the rebuilt packages lack (rebuild-srpms.sh copies it to its output, make-buildroot.sh puts it in the image).
+[fragata-buildroot-centos]
+name=CentOS 7.9 (build dependencies)
+baseurl=https://archive.kernel.org/centos-vault/7.9.2009/os/$basearch/
+# its libglvnd conflicts with the older mesa of XCP-ng
+exclude=libglvnd*
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
+priority=50
+
+[fragata-buildroot-centos-updates]
+name=CentOS 7.9 updates (build dependencies)
+baseurl=https://archive.kernel.org/centos-vault/7.9.2009/updates/$basearch/
+# its libglvnd conflicts with the older mesa of XCP-ng
+exclude=libglvnd*
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
+priority=50
+
+[fragata-buildroot-centos-extras]
+name=CentOS 7.9 extras (build dependencies)
+baseurl=https://archive.kernel.org/centos-vault/7.9.2009/extras/$basearch/
+# its libglvnd conflicts with the older mesa of XCP-ng
+exclude=libglvnd*
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
+priority=50
+
+[fragata-buildroot-epel]
+name=EPEL 7 (build dependencies)
+baseurl=https://archives.fedoraproject.org/pub/archive/epel/7/$basearch/
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-7
+priority=60
+
+[fragata-buildroot-sclo-rh]
+name=CentOS 7.9 SCLo rh (build dependencies)
+baseurl=https://archive.kernel.org/centos-vault/7.9.2009/sclo/$basearch/rh/
+# the gdb of the devtoolset-10 of XCP-ng (the builds of CentOS SCLo), for its gcc
+includepkgs=devtoolset-10-gdb*
+gpgcheck=1
+gpgkey=https://www.centos.org/keys/RPM-GPG-KEY-CentOS-SIG-SCLo
+priority=60

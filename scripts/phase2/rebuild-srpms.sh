@@ -14,7 +14,8 @@
 #   TIMEOUT: seconds a build may take (default 3600), so a hung test does not stop the rebuild
 #   BUILD_ENV: xcpng (default) builds the packages of XCP-ng in the XCP-ng 8.3 build environment; fragata in the
 #   buildroot of Fragata Host (make-buildroot.sh, image FRAGATA_IMAGE), with the rebuilt packages of BUILDROOT_RPMS
-#   (the rpms directory of a previous run, with its repository) instead of the XCP-ng repositories
+#   (the rpms directory of a previous run, with its repository) instead of the XCP-ng repositories; without
+#   BUILDROOT_RPMS, the image reads the published repositories it was made with (BUILDROOT_URLS of make-buildroot.sh)
 #   BUILD_CPUS, BUILD_MEMORY: parallel jobs (default 8) and memory (default 8g) of a build: the memory of a VM
 #   (podman machine, WSL) grows with the builds, and so does the swap of its host
 # needs podman (or docker), the images ghcr.io/xcp-ng/xcp-ng-build-env:8.3 and quay.io/centos/centos:centos7, and the
@@ -32,57 +33,15 @@ BUILD_CPUS=${BUILD_CPUS:-8}
 BUILD_MEMORY=${BUILD_MEMORY:-8g}
 BUILD_ENV=${BUILD_ENV:-xcpng}
 FRAGATA_IMAGE=${FRAGATA_IMAGE:-fragata-build-env:8.3}
-if [ "$BUILD_ENV" = fragata ]; then
+if [ "$BUILD_ENV" = fragata ] && [ -n "${BUILDROOT_RPMS:-}" ]; then
   # the rebuilt packages with their repository (make-buildroot.sh), as the engine sees them
   BUILDROOT_RPMS=$(cd "$BUILDROOT_RPMS" && { pwd -W 2>/dev/null || pwd; })
 fi
 mkdir -p "$OUT_DIR/srpms" "$OUT_DIR/rpms" "$OUT_DIR/logs" "$OUT_DIR/yumcache"
 touch "$OUT_DIR/results.tsv"
 
-cat >"$OUT_DIR/buildroot.repo" <<'EOF'
-[fragata-buildroot-centos]
-name=CentOS 7.9 (build dependencies)
-baseurl=https://archive.kernel.org/centos-vault/7.9.2009/os/$basearch/
-# its libglvnd conflicts with the older mesa of XCP-ng
-exclude=libglvnd*
-gpgcheck=1
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
-priority=50
-
-[fragata-buildroot-centos-updates]
-name=CentOS 7.9 updates (build dependencies)
-baseurl=https://archive.kernel.org/centos-vault/7.9.2009/updates/$basearch/
-# its libglvnd conflicts with the older mesa of XCP-ng
-exclude=libglvnd*
-gpgcheck=1
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
-priority=50
-
-[fragata-buildroot-centos-extras]
-name=CentOS 7.9 extras (build dependencies)
-baseurl=https://archive.kernel.org/centos-vault/7.9.2009/extras/$basearch/
-# its libglvnd conflicts with the older mesa of XCP-ng
-exclude=libglvnd*
-gpgcheck=1
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
-priority=50
-
-[fragata-buildroot-epel]
-name=EPEL 7 (build dependencies)
-baseurl=https://archives.fedoraproject.org/pub/archive/epel/7/$basearch/
-gpgcheck=1
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-7
-priority=60
-
-[fragata-buildroot-sclo-rh]
-name=CentOS 7.9 SCLo rh (build dependencies)
-baseurl=https://archive.kernel.org/centos-vault/7.9.2009/sclo/$basearch/rh/
-# the gdb of the devtoolset-10 of XCP-ng (the builds of CentOS SCLo), for its gcc
-includepkgs=devtoolset-10-gdb*
-gpgcheck=1
-gpgkey=https://www.centos.org/keys/RPM-GPG-KEY-CentOS-SIG-SCLo
-priority=60
-EOF
+# the repositories of the buildroot, as the builds and the image (make-buildroot.sh) read them
+cp "$(cd "$(dirname "$0")" && pwd)/buildroot.repo" "$OUT_DIR/buildroot.repo"
 
 # builds $srpm in a buildroot (centos, xcpng), its output appended to its log
 build_in() {
@@ -95,6 +54,14 @@ build_in() {
   case $1 in
     centos)
       image=quay.io/centos/centos:centos7
+      # what the buildroot of CentOS 7.9 holds differs from the one the package was built in
+      case $srpm in
+        # the gcc 3.2 of RHEL 7.0 was built with the bison of RHEL 7.0 (2.7): the parser of gcc 3.2 uses the YYLEX macro
+        # that bison 3 (RHEL 7.1 and later) dropped
+        compat-gcc-32-*) fixes='curl -sfLo /tmp/bison.rpm https://archive.kernel.org/centos-vault/7.0.1406/os/x86_64/Packages/bison-2.7-4.el7.x86_64.rpm &&
+          rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7 && rpm -K /tmp/bison.rpm && rpm -Uvh --oldpackage /tmp/bison.rpm' ;;
+        *) fixes= ;;
+      esac
       setup="
         rm -f /etc/yum.repos.d/*.repo
         sed '/^exclude=/d' /work/buildroot.repo >/etc/yum.repos.d/buildroot.repo
@@ -120,7 +87,8 @@ build_in() {
                 glibc.i686 glibc-devel.i686 ;;
             esac ;;
         esac
-        yum-builddep -y /work/srpms/$srpm"
+        yum-builddep -y /work/srpms/$srpm
+        $fixes"
       cache=yumcache-centos
       mounts=
       rpmbuild_opts="--define 'dist $dist'"
@@ -131,7 +99,7 @@ build_in() {
         image=$FRAGATA_IMAGE
         tools=fragata
         cache=yumcache-fragata
-        mounts="-v $BUILDROOT_RPMS:/buildroot:ro"
+        mounts=${BUILDROOT_RPMS:+-v $BUILDROOT_RPMS:/buildroot:ro}
         # its repositories already include the buildroot
         add_buildroot=false
       else
@@ -155,6 +123,12 @@ build_in() {
         samba-*) builddep_opts=
           if [ "$BUILD_ENV" = fragata ]; then repo_opts=; else repo_opts=--disablerepo=$tools; fi
           fixes="sudo yum downgrade -y $repo_opts libcmocka-1.1.2-1.el7 libcmocka-devel-1.1.2-1.el7" ;;
+        # the coccinelle of EPEL 7 runs on the OCaml of CentOS 7 (4.05), not on the OCaml of XCP-ng
+        kmod-drbd-*) builddep_opts="--setopt=$tools.exclude=ocaml*" ;;
+        # its SRPM asks for the python3 of EPEL of its time (python34); the spec builds with the python3 of the
+        # buildroot (the channel only ships python2-psutil)
+        python-psutil-*) builddep_opts=--setopt=$tools.exclude=autoconf
+          fixes='sudo yum install -y python3-devel' ;;
         # the packages of CentOS regenerate their configure with the autoconf of CentOS 7 (2.69)
         *.el7*) builddep_opts=--setopt=$tools.exclude=autoconf ;;
         *) builddep_opts= ;;
@@ -190,6 +164,11 @@ build_in() {
 %{__os_install_post}'" ;;
       esac
       ;;
+  esac
+  case $srpm in
+    # LINBIT built it with the manual pages of its tarball (the build requirements of its SRPM name no po4a nor
+    # xsltproc); the spec, as written, regenerates them
+    drbd-*) rpmbuild_opts="$rpmbuild_opts --with prebuiltman" ;;
   esac
   mkdir -p "$OUT_DIR/$cache"
   # Git Bash on Windows: no conversion of the container paths
