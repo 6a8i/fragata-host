@@ -62,7 +62,8 @@ done
 echo "$(ls "$WORK/packages" | wc -l) packages in the buildroot"
 
 # metadata: the packages are downloaded from the release
-if command -v createrepo_c >/dev/null; then createrepo_c -q --baseurl "$URL" --outputdir "$WORK/repo" "$WORK/packages"
+# gzip metadata: the yum of the buildroot (CentOS 7) does not read zstd
+if command -v createrepo_c >/dev/null; then createrepo_c -q --general-compress-type gz --baseurl "$URL" --outputdir "$WORK/repo" "$WORK/packages"
 else createrepo -q --baseurl "$URL" --outputdir "$WORK/repo" "$WORK/packages"; fi
 git clone -q --depth 1 -b gh-pages "$REMOTE" "$WORK/site"
 mkdir -p "$WORK/site/$TAG/x86_64"
