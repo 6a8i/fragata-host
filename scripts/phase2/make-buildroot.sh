@@ -72,4 +72,4 @@ MSYS_NO_PATHCONV=1 "$ENGINE" run --rm -v "$OUT:/work" -v "$OUT/rpms:/buildroot" 
   '
 "$ENGINE" import "$OUT/buildroot-fs.tar" "$IMAGE"
 rm -f "$OUT_DIR/buildroot-fs.tar"
-echo "$IMAGE: $(wc -l <"$OUT_DIR/buildroot-image.tsv") packages, $(grep -c 'fragata$' "$OUT_DIR/buildroot-image.tsv" || true) of them rebuilt"
+echo "$IMAGE: $(wc -l <"$OUT_DIR/buildroot-image.tsv") packages, $(grep -cE '	fragata(-[0-9]+)?$' "$OUT_DIR/buildroot-image.tsv" || true) of them rebuilt"
